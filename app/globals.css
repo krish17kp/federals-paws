@@ -1,26 +1,89 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-primary: #1A1A1A;
+  --color-primary-container: #1A1A1A;
+  --color-primary-fixed: #E0DDD5;
+  --color-primary-fixed-dim: #D9D7D0;
+  --color-on-primary: #F4F1EA;
+  --color-on-primary-container: #F4F1EA;
+
+  --color-secondary: #333333;
+  --color-secondary-container: #EAE6DF;
+  --color-secondary-fixed: #D9D7D0;
+  --color-on-secondary: #F4F1EA;
+
+  --color-surface-container-lowest: #FDFCFB;
+  --color-surface-container-low: #F4F1EA;
+  --color-surface-container: #EAE6DF;
+  --color-surface-container-high: #E0DDD5;
+  --color-surface-bright: #FDFCFB;
+  --color-surface: #F4F1EA;
+  --color-surface-tint: #1A1A1A;
+  --color-on-surface: #1A1A1A;
+  --color-on-surface-variant: rgba(26, 26, 26, 0.6);
+
+  --color-background: #F4F1EA;
+  --color-on-background: #1A1A1A;
+
+  --color-error: #8A2D2D;
+  --color-error-container: #EAD0D0;
+  --color-on-error-container: #4A1515;
+
+  --color-yellow-500: #8C753B;
+  --color-yellow-600: #735F2B;
+
+  --color-outline: rgba(26, 26, 26, 0.4);
+  --color-outline-variant: rgba(26, 26, 26, 0.15);
+
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: Georgia, "Times New Roman", serif;
+
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --shadow-xl: none;
+  --shadow-inner: none;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-background);
+  color: var(--color-on-surface);
+  font-family: var(--font-sans);
+}
+
+.font-serif,
+h1,
+h2,
+h3 {
+  font-family: var(--font-serif);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+  border-left: 1px solid var(--color-outline-variant);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-outline);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary);
 }
