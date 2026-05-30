@@ -1,0 +1,704 @@
+{
+  "name": "FederalPaws - Historical Backfill Strict Final Only CLEAN",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -3408,
+        1616
+      ],
+      "id": "0fa30296-3425-4580-9c72-284a06a3d602",
+      "name": "Manual Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $(\"Set Backfill Range2\").first().json;\nconst minScore = Number(context.min_keyword_score || 35);\nconst maxAiCandidates = Number(context.max_ai_candidates || 0);\n\nconst strongAnimalTerms = [\n  \"animal\", \"animals\", \"animal welfare\", \"animal health\", \"animal disease\",\n  \"animal testing\", \"laboratory animal\", \"laboratory animals\", \"lab animal\",\n  \"lab animals\", \"humane handling\", \"animal handling\", \"animal care\",\n  \"animal cruelty\", \"livestock\", \"cattle\", \"calves\", \"swine\", \"pig\", \"pigs\",\n  \"pork\", \"poultry\", \"chicken\", \"chickens\", \"turkey\", \"turkeys\", \"sheep\",\n  \"goat\", \"goats\", \"horse\", \"horses\", \"equine\", \"veterinary\", \"veterinarian\",\n  \"wildlife\", \"endangered species\", \"threatened species\", \"marine mammal\",\n  \"marine mammals\", \"migratory bird\", \"migratory birds\", \"fish and wildlife\",\n  \"fisheries\", \"habitat\", \"refuge\", \"national wildlife refuge\",\n  \"habitat conservation\", \"critical habitat\", \"species status assessment\",\n  \"animal and plant health inspection service\", \"aphis\", \"fish and wildlife service\",\n  \"noaa fisheries\", \"national marine fisheries service\", \"food safety and inspection service\",\n  \"fsis\", \"animal drugs\", \"new animal drug\", \"zoonotic\", \"zoonosis\", \"aquaculture\",\n  \"slaughter\", \"meat inspection\", \"animal transport\", \"quarantine facilities\",\n  \"primate\", \"primates\", \"dog\", \"dogs\", \"cat\", \"cats\", \"trapping\", \"hunting\",\n  \"fishing regulations\", \"invasive species\"\n];\n\nconst strongAnimalAgencies = [\n  \"animal and plant health inspection service\", \"aphis\",\n  \"food safety and inspection service\", \"fsis\",\n  \"fish and wildlife service\",\n  \"national marine fisheries service\", \"noaa fisheries\",\n  \"national oceanic and atmospheric administration\",\n  \"commerce department\",\n  \"agriculture department\", \"u.s. department of agriculture\",\n  \"interior department\", \"food and drug administration\", \"fda\",\n  \"national institutes of health\", \"nih\",\n  \"environmental protection agency\", \"epa\"\n];\n\nconst policyTerms = [\n  \"proposed rule\", \"final rule\", \"rule\", \"notice\", \"public comment\", \"comments\",\n  \"comment period\", \"hearing\", \"permit\", \"authorization\", \"incidental take\",\n  \"incidental harassment authorization\", \"endangered species act\",\n  \"marine mammal protection act\", \"animal welfare act\", \"inspection\", \"quarantine\",\n  \"import\", \"export\", \"disease\", \"management\", \"conservation\", \"habitat\",\n  \"research\", \"monitoring\", \"compliance\", \"enforcement\", \"approval\", \"renewal\"\n];\n\nconst negativeTerms = [\n  \"federal reserve\", \"bank holding company\", \"securities and exchange\",\n  \"stock exchange\", \"federal energy regulatory commission\", \"student aid\",\n  \"department of education\", \"nuclear reactor\", \"tin mill\", \"steel\",\n  \"countervailing duty\", \"antidumping\", \"anti-dumping\", \"tariff\",\n  \"imports from china\", \"international trade commission\", \"citric acid\",\n  \"citrate salts\", \"airworthiness directive\", \"airworthiness directives\",\n  \"airbus\", \"boeing\", \"airplane\", \"airplanes\", \"aviation\", \"faa\",\n  \"medical devices\", \"neurological devices\", \"radiological health\"\n];\n\nfunction normalize(value) {\n  return String(value || \"\")\n    .toLowerCase()\n    .replace(/[^a-z0-9\\s-]/g, \" \")\n    .replace(/\\s+/g, \" \")\n    .trim();\n}\n\nfunction escapeRegex(value) {\n  return value.replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\");\n}\n\nfunction hasTerm(text, term) {\n  const normalizedText = normalize(text);\n  const normalizedTerm = normalize(term);\n  if (!normalizedText || !normalizedTerm) return false;\n  const pattern = new RegExp(`(^|\\\\W)${escapeRegex(normalizedTerm)}($|\\\\W)`, \"i\");\n  return pattern.test(normalizedText);\n}\n\nfunction matchedTerms(text, terms) {\n  return terms.filter(term => hasTerm(text, term));\n}\n\nconst output = [];\n\nfor (const item of $input.all()) {\n  const doc = item.json || {};\n\n  const title = normalize(doc.title);\n  const abstract = normalize(doc.abstract);\n  const agency = normalize(doc.agency);\n  const type = normalize(doc.document_type);\n  const titleAndAbstract = [title, abstract].join(\" \");\n  const fullText = [title, abstract, agency, type].join(\" \");\n\n  const animalMatches = matchedTerms(titleAndAbstract, strongAnimalTerms);\n  const agencyMatches = matchedTerms(agency, strongAnimalAgencies);\n  const policyMatches = matchedTerms(fullText, policyTerms);\n  const negativeMatches = matchedTerms(fullText, negativeTerms);\n\n  let score = 0;\n\n  for (const term of strongAnimalTerms) {\n    if (hasTerm(title, term)) score += 50;\n    if (hasTerm(abstract, term)) score += 30;\n  }\n\n  if (agencyMatches.length > 0) score += 25;\n  if (policyMatches.length > 0) score += 15;\n  if (doc.comment_url) score += 10;\n\n  if (hasTerm(type, \"proposed rule\")) score += 15;\n  else if (hasTerm(type, \"rule\")) score += 10;\n  else if (hasTerm(type, \"notice\")) score += 5;\n\n  if (negativeMatches.length > 0 && animalMatches.length === 0 && agencyMatches.length === 0) {\n    score -= 100;\n  }\n\n  const hasAnimalSignal = animalMatches.length > 0 || agencyMatches.length > 0;\n  const hasPolicySignal = policyMatches.length > 0 || doc.comment_url || type.includes(\"notice\") || type.includes(\"rule\");\n\n  if (hasAnimalSignal && hasPolicySignal && score >= minScore) {\n    output.push({\n      json: {\n        ...doc,\n        strict_score: score,\n        matched_terms: [...new Set(animalMatches)],\n        matched_agencies: [...new Set(agencyMatches)],\n        matched_policy_terms: [...new Set(policyMatches)],\n        matched_negative_terms: [...new Set(negativeMatches)],\n        filter_stage: \"strict_animal_policy_candidate\"\n      }\n    });\n  }\n}\n\noutput.sort((a, b) => (b.json.strict_score || 0) - (a.json.strict_score || 0));\n\nif (maxAiCandidates > 0) {\n  return output.slice(0, maxAiCandidates);\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        1600
+      ],
+      "id": "c848b789-08d6-4a13-a567-84366fdea63f",
+      "name": "Strict Animal Policy Candidate Filter - No Storage"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -688,
+        1600
+      ],
+      "id": "64c98988-972d-4fe2-9078-84d16c842d10",
+      "name": "Merge Embedding Response With Original"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        272,
+        1600
+      ],
+      "id": "303535ac-174f-4e40-b330-bdb82b3f36e0",
+      "name": "Merge Relevance Response With Original"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Historical Federal Register animal-policy backfill.\n// Goal:\n// Fetch one-year Federal Register data -> strict candidate filter -> embeddings -> OpenRouter final relevance\n// -> store ONLY final relevant animal-policy notices in public.fr_documents.\n// Rejected records are NOT stored.\n\nconst start_date = \"2025-01-01\";\nconst end_date = new Date().toISOString().split(\"T\")[0];\n\nreturn [\n  {\n    json: {\n      start_date,\n      end_date,\n      per_page: 1000,\n      base_url: \"https://www.federalregister.gov/api/v1/documents.json\",\n      lookup_mode: \"historical_animal_backfill_strict_final_only\",\n      min_keyword_score: 35,\n      min_embedding_similarity: 0.30,\n      // 0 means no cap. For quick testing set this to 25 or 50.\n      max_ai_candidates: 0,\n      embedding_model: \"openai/text-embedding-3-small\",\n      relevance_model: \"openai/gpt-4o-mini\"\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3088,
+        1600
+      ],
+      "id": "f0b08075-4b03-40fb-9a15-6d7ed09447b8",
+      "name": "Set Backfill Range2"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS public.fr_documents (\n  id TEXT PRIMARY KEY,\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  updated_at TIMESTAMPTZ DEFAULT NOW()\n);\n\nALTER TABLE public.fr_documents\n  ADD COLUMN IF NOT EXISTS document_number TEXT,\n  ADD COLUMN IF NOT EXISTS title TEXT,\n  ADD COLUMN IF NOT EXISTS abstract TEXT,\n  ADD COLUMN IF NOT EXISTS document_type TEXT,\n  ADD COLUMN IF NOT EXISTS publication_date DATE,\n  ADD COLUMN IF NOT EXISTS agency TEXT,\n  ADD COLUMN IF NOT EXISTS agency_slugs TEXT,\n  ADD COLUMN IF NOT EXISTS html_url TEXT,\n  ADD COLUMN IF NOT EXISTS pdf_url TEXT,\n  ADD COLUMN IF NOT EXISTS comment_url TEXT,\n  ADD COLUMN IF NOT EXISTS matched_terms TEXT,\n  ADD COLUMN IF NOT EXISTS matched_agencies TEXT,\n  ADD COLUMN IF NOT EXISTS matched_policy_terms TEXT,\n  ADD COLUMN IF NOT EXISTS strict_score NUMERIC,\n  ADD COLUMN IF NOT EXISTS embedding_score NUMERIC,\n  ADD COLUMN IF NOT EXISTS ai_decision TEXT,\n  ADD COLUMN IF NOT EXISTS ai_relevance_status TEXT,\n  ADD COLUMN IF NOT EXISTS type_of_action TEXT,\n  ADD COLUMN IF NOT EXISTS urgency TEXT,\n  ADD COLUMN IF NOT EXISTS advocacy_relevance TEXT,\n  ADD COLUMN IF NOT EXISTS deadline_sensitivity TEXT,\n  ADD COLUMN IF NOT EXISTS ai_summary TEXT,\n  ADD COLUMN IF NOT EXISTS why_it_matters TEXT,\n  ADD COLUMN IF NOT EXISTS actionability TEXT,\n  ADD COLUMN IF NOT EXISTS recommended_action TEXT,\n  ADD COLUMN IF NOT EXISTS talking_points TEXT,\n  ADD COLUMN IF NOT EXISTS deadline TEXT,\n  ADD COLUMN IF NOT EXISTS verification_instructions TEXT,\n  ADD COLUMN IF NOT EXISTS disclaimer TEXT,\n  ADD COLUMN IF NOT EXISTS lookup_mode TEXT;\n\nCREATE INDEX IF NOT EXISTS idx_fr_documents_publication_date\n  ON public.fr_documents (publication_date);\n\nCREATE INDEX IF NOT EXISTS idx_fr_documents_ai_decision\n  ON public.fr_documents (ai_decision);\n\nCREATE INDEX IF NOT EXISTS idx_fr_documents_agency\n  ON public.fr_documents (agency);\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2848,
+        1600
+      ],
+      "id": "3ebee239-c7ae-481e-8126-2402d246a874",
+      "name": "Postgres - Ensure fr_documents Schema Only1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $(\"Set Backfill Range2\").first().json;\nreturn [{ json: context }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2608,
+        1600
+      ],
+      "id": "2e3e0f8c-87c2-4f79-8d46-719458072051",
+      "name": "Restore Backfill Context1"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.base_url + \"?per_page=\" + $json.per_page + \"&page=1&order=newest&conditions[publication_date][gte]=\" + $json.start_date + \"&conditions[publication_date][lte]=\" + $json.end_date }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -2368,
+        1600
+      ],
+      "id": "4671a472-3c8b-49cd-b272-ed3a59bb7c5d",
+      "name": "Fetch First Page2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const firstResponse = $input.first().json;\nconst context = $(\"Restore Backfill Context1\").first().json;\n\nconst totalPages = Number(firstResponse.total_pages || 1);\n// Full pagination. For a test run, temporarily set hardLimitPages = 2.\nconst hardLimitPages = totalPages;\nconst items = [];\n\nfor (let page = 1; page <= hardLimitPages; page++) {\n  const pageUrl =\n    context.base_url +\n    \"?per_page=\" + context.per_page +\n    \"&page=\" + page +\n    \"&order=newest\" +\n    \"&conditions[publication_date][gte]=\" + context.start_date +\n    \"&conditions[publication_date][lte]=\" + context.end_date;\n\n  items.push({\n    json: {\n      page,\n      total_pages: totalPages,\n      page_url: pageUrl,\n      start_date: context.start_date,\n      end_date: context.end_date,\n      lookup_mode: context.lookup_mode,\n      min_keyword_score: context.min_keyword_score,\n      min_embedding_similarity: context.min_embedding_similarity,\n      max_ai_candidates: context.max_ai_candidates,\n      embedding_model: context.embedding_model,\n      relevance_model: context.relevance_model\n    }\n  });\n}\n\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2128,
+        1600
+      ],
+      "id": "17c151e3-4b31-499a-9939-cfc4c331b22c",
+      "name": "Build Page URLs2"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.page_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1888,
+        1600
+      ],
+      "id": "81b832f8-05e0-43ab-9786-1e77797ab84f",
+      "name": "Fetch Each Page2",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const pageItems = $input.all();\nconst output = [];\n\nfunction ymd(value) {\n  if (!value) return \"\";\n  return String(value).slice(0, 10);\n}\n\nfunction agencyNames(doc) {\n  if (!Array.isArray(doc.agencies)) return \"\";\n  return doc.agencies\n    .map(a => a.name || a.raw_name || \"\")\n    .filter(Boolean)\n    .join(\"; \");\n}\n\nfunction agencySlugs(doc) {\n  if (!Array.isArray(doc.agencies)) return \"\";\n  return doc.agencies\n    .map(a => a.slug || \"\")\n    .filter(Boolean)\n    .join(\";\");\n}\n\nconst context = $(\"Set Backfill Range2\").first().json;\n\nfor (const pageItem of pageItems) {\n  const response = pageItem.json || {};\n  const docs = Array.isArray(response.results) ? response.results : [];\n\n  for (const doc of docs) {\n    const id = doc.document_number || doc.html_url || doc.pdf_url || doc.title;\n    if (!id) continue;\n\n    output.push({\n      json: {\n        id,\n        document_number: doc.document_number || \"\",\n        title: doc.title || \"\",\n        abstract: doc.abstract || doc.excerpts || \"\",\n        document_type: doc.type || doc.document_type || \"\",\n        publication_date: ymd(doc.publication_date),\n        agency: agencyNames(doc),\n        agency_slugs: agencySlugs(doc),\n        html_url: doc.html_url || \"\",\n        pdf_url: doc.pdf_url || \"\",\n        comment_url: doc.comment_url || \"\",\n        lookup_mode: context.lookup_mode\n      }\n    });\n  }\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1648,
+        1600
+      ],
+      "id": "b64385fc-62dd-4d48-b3cc-30432d3ef3d1",
+      "name": "Normalize Federal Register Documents2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $(\"Set Backfill Range2\").first().json;\n\nconst referenceText = [\n  \"Federal Register policy, regulation, enforcement, public comment, permit, hearing, or agency notice that affects animals, animal welfare, animal health, wildlife, endangered species, threatened species, laboratory animals, livestock, veterinary medicine, humane handling, animal transport, slaughter, marine mammals, migratory birds, fisheries, habitat, conservation, animal disease, or animal advocacy.\",\n  \"Relevant agencies include USDA APHIS, USDA FSIS, FDA Center for Veterinary Medicine, Fish and Wildlife Service, NOAA Fisheries, National Marine Fisheries Service, Interior Department, Agriculture Department.\"\n].join(\" \");\n\nfunction cleanText(value) {\n  return String(value || \"\")\n    .replace(/\\s+/g, \" \")\n    .replace(/[\\u0000-\\u001F\\u007F]/g, \" \")\n    .trim();\n}\n\nreturn $input.all().map(item => {\n  const doc = item.json || {};\n\n  const docText = [\n    `Title: ${cleanText(doc.title)}`,\n    `Agency: ${cleanText(doc.agency)}`,\n    `Type: ${cleanText(doc.document_type)}`,\n    `Publication Date: ${cleanText(doc.publication_date)}`,\n    `Abstract: ${cleanText(doc.abstract)}`,\n    `Matched Animal Terms: ${Array.isArray(doc.matched_terms) ? doc.matched_terms.join(\", \") : cleanText(doc.matched_terms)}`,\n    `Matched Animal Agencies: ${Array.isArray(doc.matched_agencies) ? doc.matched_agencies.join(\", \") : cleanText(doc.matched_agencies)}`,\n    `Matched Policy Terms: ${Array.isArray(doc.matched_policy_terms) ? doc.matched_policy_terms.join(\", \") : cleanText(doc.matched_policy_terms)}`\n  ].join(\"\\n\").slice(0, 7000);\n\n  return {\n    json: {\n      ...doc,\n      embedding_input_text: docText,\n      embedding_reference_text: referenceText,\n      embedding_request_body: {\n        model: context.embedding_model || \"openai/text-embedding-3-small\",\n        input: [docText, referenceText]\n      }\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1168,
+        1600
+      ],
+      "id": "f70c3759-d324-4945-87ef-4da3a4ea5ef3",
+      "name": "Build Embedding Request - Clean1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/embeddings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "https://openpaws.org"
+            },
+            {
+              "name": "X-OpenRouter-Title",
+              "value": "Federal Paws Historical Backfill"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.embedding_request_body }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -928,
+        1728
+      ],
+      "id": "2c988245-d434-4400-955a-9aa9ddb89bbf",
+      "name": "Generate OpenRouter Embeddings2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $(\"Set Backfill Range2\").first().json;\nconst minSimilarity = Number(context.min_embedding_similarity || 0.30);\n\nfunction cosineSimilarity(a, b) {\n  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || a.length === 0) return 0;\n  let dot = 0;\n  let normA = 0;\n  let normB = 0;\n  for (let i = 0; i < a.length; i++) {\n    const x = Number(a[i] || 0);\n    const y = Number(b[i] || 0);\n    dot += x * y;\n    normA += x * x;\n    normB += y * y;\n  }\n  if (!normA || !normB) return 0;\n  return dot / (Math.sqrt(normA) * Math.sqrt(normB));\n}\n\nfunction fallbackScore(doc) {\n  const text = [\n    doc.title,\n    doc.abstract,\n    doc.agency,\n    doc.document_type,\n    Array.isArray(doc.matched_terms) ? doc.matched_terms.join(\" \") : doc.matched_terms,\n    Array.isArray(doc.matched_agencies) ? doc.matched_agencies.join(\" \") : doc.matched_agencies,\n    Array.isArray(doc.matched_policy_terms) ? doc.matched_policy_terms.join(\" \") : doc.matched_policy_terms\n  ].join(\" \").toLowerCase();\n\n  const terms = [\n    \"animal welfare\", \"marine mammal\", \"marine mammals\", \"wildlife\",\n    \"endangered species\", \"threatened species\", \"fish and wildlife\",\n    \"laboratory animal\", \"livestock\", \"veterinary\", \"animal disease\",\n    \"public comment\", \"comments\", \"permit\", \"authorization\",\n    \"incidental take\", \"incidental harassment\", \"marine mammal protection act\",\n    \"animal welfare act\", \"endangered species act\"\n  ];\n\n  let score = 0;\n  for (const term of terms) {\n    if (text.includes(term)) score += 0.05;\n  }\n  return Math.min(score, 0.95);\n}\n\nconst output = [];\n\nfor (const item of $input.all()) {\n  const doc = item.json || {};\n  const embeddingData = Array.isArray(doc.data) ? doc.data : [];\n\n  const docEmbedding = embeddingData[0]?.embedding || [];\n  const refEmbedding = embeddingData[1]?.embedding || [];\n\n  let embeddingScore = 0;\n  if (Array.isArray(docEmbedding) && docEmbedding.length > 0 && Array.isArray(refEmbedding) && refEmbedding.length > 0) {\n    embeddingScore = cosineSimilarity(docEmbedding, refEmbedding);\n  } else {\n    embeddingScore = fallbackScore(doc);\n  }\n\n  const strictScore = Number(doc.strict_score || 0);\n\n  // This is a candidate gate only. Final strict decision happens in OpenRouter.\n  const passEmbedding =\n    embeddingScore >= minSimilarity ||\n    strictScore >= 60 ||\n    String(doc.abstract || \"\").toLowerCase().includes(\"marine mammal\") ||\n    String(doc.abstract || \"\").toLowerCase().includes(\"endangered species\") ||\n    String(doc.abstract || \"\").toLowerCase().includes(\"wildlife\");\n\n  if (!passEmbedding) {\n    continue;\n  }\n\n  output.push({\n    json: {\n      ...doc,\n      embedding_score: Number(embeddingScore.toFixed(4)),\n      embedding_gate_status: \"PASSED\"\n    }\n  });\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        1600
+      ],
+      "id": "db21606f-c293-4d5b-b98b-42fe2e4beafd",
+      "name": "Embedding Similarity Gate - No Storage1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $(\"Set Backfill Range2\").first().json;\n\nreturn $input.all().map(item => {\n  const doc = item.json || {};\n\n  const prompt = `You are classifying U.S. Federal Register documents for an animal advocacy notification system.\n\nBe strict. Approve only documents that clearly affect animals, animal welfare, animal health, wildlife, endangered species, laboratory animals, livestock, veterinary medicine, humane handling, animal transport, slaughter/meat inspection, marine mammals, migratory birds, fisheries, habitat, permits, public comments, hearings, rulemaking, or agency action affecting animals.\n\nReject weak matches, generic agency notices, finance, aviation, trade, education, banking, human medical devices, and unrelated government administration.\n\nReturn ONLY the exact field format below. No markdown.\n\nDocument:\nTitle: ${doc.title || \"\"}\nAgency: ${doc.agency || \"\"}\nPublication Date: ${doc.publication_date || \"\"}\nDocument Type: ${doc.document_type || \"\"}\nDocument Number: ${doc.document_number || \"\"}\nAbstract: ${doc.abstract || \"\"}\nSource URL: ${doc.html_url || \"\"}\nPDF URL: ${doc.pdf_url || \"\"}\nComment URL: ${doc.comment_url || \"\"}\nStrict Score: ${doc.strict_score || 0}\nEmbedding Score: ${doc.embedding_score || 0}\nMatched Animal Terms: ${Array.isArray(doc.matched_terms) ? doc.matched_terms.join(\", \") : doc.matched_terms || \"\"}\nMatched Agencies: ${Array.isArray(doc.matched_agencies) ? doc.matched_agencies.join(\", \") : doc.matched_agencies || \"\"}\nMatched Policy Terms: ${Array.isArray(doc.matched_policy_terms) ? doc.matched_policy_terms.join(\", \") : doc.matched_policy_terms || \"\"}\n\nRequired output format:\nRelevance Status: RELEVANT or NOT_RELEVANT\nEmail Decision: SEND or DO_NOT_SEND\nType of Action: Proposed Rule / Final Rule / Notice / Public Comment / Permit / Hearing / Other\nUrgency: High / Medium / Low\nAdvocacy Relevance: High / Medium / Low\nDeadline Sensitivity: High / Medium / Low / None\nSummary: [2-3 plain English sentences]\nWhy It Matters: [1-2 sentences for animal advocates]\nActionability Assessment: [state whether action is possible, informational only]\nRecommended Action: Public comment / Monitor / No action available / Research further\nSuggested Advocacy Talking Points: [2-3 short semicolon-separated talking points]\nDeadline: YYYY-MM-DD or None\nVerification Instructions: Open the official Federal Register source link, confirm the agency, publication date, document number, comment deadline, and action type before taking any advocacy action.\nDisclaimer: This represents informational guidance only and not legal advice.`;\n\n  return {\n    json: {\n      ...doc,\n      relevance_request_body: {\n        model: context.relevance_model || \"openai/gpt-4o-mini\",\n        messages: [\n          {\n            role: \"system\",\n            content: \"You are a strict Federal Register classifier for animal advocacy relevance. If relevance is unclear, return NOT_RELEVANT and DO_NOT_SEND. Never invent deadlines or claims.\"\n          },\n          {\n            role: \"user\",\n            content: prompt\n          }\n        ],\n        temperature: 0,\n        max_tokens: 900\n      }\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -208,
+        1600
+      ],
+      "id": "c7e48350-1403-4a70-9e83-74274cfb0e3b",
+      "name": "Build OpenRouter Final Relevance Request1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "https://openpaws.org"
+            },
+            {
+              "name": "X-OpenRouter-Title",
+              "value": "Federal Paws Historical Backfill"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.relevance_request_body }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        32,
+        1728
+      ],
+      "id": "0a73c617-05ea-44d7-9a0f-d811539179b3",
+      "name": "Generate OpenRouter Final Relevance Check1"
+    },
+    {
+      "parameters": {
+        "jsCode": "function getField(content, label) {\n  const regex = new RegExp(`^${label}:\\\\s*(.*)$`, \"im\");\n  const match = String(content || \"\").match(regex);\n  return match ? match[1].trim() : \"\";\n}\n\nconst output = [];\n\nfor (const item of $input.all()) {\n  const doc = item.json || {};\n\n  let content = \"\";\n  try {\n    content = doc.choices?.[0]?.message?.content || \"\";\n  } catch (error) {\n    content = \"\";\n  }\n\n  content = String(content)\n    .replace(/\\*\\*/g, \"\")\n    .replace(/\\*/g, \"\")\n    .replace(/#{1,6}\\s/g, \"\")\n    .trim();\n\n  if (!content || doc.error) {\n    output.push({\n      json: {\n        ...doc,\n        ai_relevance_status: \"NOT_RELEVANT\",\n        ai_decision: \"DO_NOT_SEND\",\n        ai_content: content\n      }\n    });\n    continue;\n  }\n\n  const relevanceStatus = getField(content, \"Relevance Status\").toUpperCase();\n  const emailDecisionRaw = getField(content, \"Email Decision\").toUpperCase();\n  const advocacyRelevance = getField(content, \"Advocacy Relevance\");\n  const summary = getField(content, \"Summary\");\n\n  const parsed = {\n    ai_relevance_status: relevanceStatus || \"UNKNOWN\",\n    ai_decision: relevanceStatus === \"RELEVANT\" && emailDecisionRaw === \"SEND\" ? \"SEND\" : \"DO_NOT_SEND\",\n    type_of_action: getField(content, \"Type of Action\"),\n    urgency: getField(content, \"Urgency\"),\n    advocacy_relevance: advocacyRelevance,\n    deadline_sensitivity: getField(content, \"Deadline Sensitivity\"),\n    ai_summary: summary,\n    why_it_matters: getField(content, \"Why It Matters\"),\n    actionability: getField(content, \"Actionability Assessment\"),\n    recommended_action: getField(content, \"Recommended Action\"),\n    talking_points: getField(content, \"Suggested Advocacy Talking Points\"),\n    deadline: getField(content, \"Deadline\"),\n    verification_instructions: getField(content, \"Verification Instructions\") || \"Open the official Federal Register source link, confirm the agency, publication date, document number, comment deadline, and action type before taking any advocacy action.\",\n    disclaimer: getField(content, \"Disclaimer\") || \"This represents informational guidance only and not legal advice.\",\n    ai_content: content\n  };\n\n  output.push({\n    json: {\n      ...doc,\n      ...parsed\n    }\n  });\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        512,
+        1600
+      ],
+      "id": "c699c8cb-0b64-4abb-b0bf-98db6b7d3e4d",
+      "name": "Parse OpenRouter Final Relevance Result1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "final-send",
+              "leftValue": "={{ $json.ai_decision }}",
+              "rightValue": "SEND",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "final-relevant",
+              "leftValue": "={{ $json.ai_relevance_status }}",
+              "rightValue": "RELEVANT",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        752,
+        1600
+      ],
+      "id": "faee0732-82e6-4638-b8f9-22a1a5a2215b",
+      "name": "IF Final Relevant - Store Only These1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.fr_documents (\n  id,\n  document_number,\n  title,\n  abstract,\n  document_type,\n  publication_date,\n  agency,\n  agency_slugs,\n  html_url,\n  pdf_url,\n  comment_url,\n  matched_terms,\n  matched_agencies,\n  matched_policy_terms,\n  strict_score,\n  embedding_score,\n  ai_decision,\n  ai_relevance_status,\n  type_of_action,\n  urgency,\n  advocacy_relevance,\n  deadline_sensitivity,\n  ai_summary,\n  why_it_matters,\n  actionability,\n  recommended_action,\n  talking_points,\n  deadline,\n  verification_instructions,\n  disclaimer,\n  lookup_mode,\n  created_at,\n  updated_at\n)\nVALUES (\n  '{{ ($json.id || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.document_number || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.title || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.abstract || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.document_type || \"\").replace(/'/g, \"''\") }}',\n  NULLIF('{{ $json.publication_date || \"\" }}', '')::date,\n  '{{ ($json.agency || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.agency_slugs || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.html_url || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.pdf_url || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.comment_url || \"\").replace(/'/g, \"''\") }}',\n  '{{ (Array.isArray($json.matched_terms) ? $json.matched_terms.join(\", \") : ($json.matched_terms || \"\")).replace(/'/g, \"''\") }}',\n  '{{ (Array.isArray($json.matched_agencies) ? $json.matched_agencies.join(\", \") : ($json.matched_agencies || \"\")).replace(/'/g, \"''\") }}',\n  '{{ (Array.isArray($json.matched_policy_terms) ? $json.matched_policy_terms.join(\", \") : ($json.matched_policy_terms || \"\")).replace(/'/g, \"''\") }}',\n  {{ Number($json.strict_score || 0) }},\n  {{ Number($json.embedding_score || 0) }},\n  '{{ ($json.ai_decision || \"SEND\").replace(/'/g, \"''\") }}',\n  '{{ ($json.ai_relevance_status || \"RELEVANT\").replace(/'/g, \"''\") }}',\n  '{{ ($json.type_of_action || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.urgency || \"Low\").replace(/'/g, \"''\") }}',\n  '{{ ($json.advocacy_relevance || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.deadline_sensitivity || \"None\").replace(/'/g, \"''\") }}',\n  '{{ ($json.ai_summary || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.why_it_matters || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.actionability || \"Monitoring Only\").replace(/'/g, \"''\") }}',\n  '{{ ($json.recommended_action || \"Research further\").replace(/'/g, \"''\") }}',\n  '{{ ($json.talking_points || \"\").replace(/'/g, \"''\") }}',\n  '{{ ($json.deadline || \"None\").replace(/'/g, \"''\") }}',\n  '{{ ($json.verification_instructions || \"Open the official Federal Register source link, confirm the agency, publication date, document number, comment deadline, and action type before taking any advocacy action.\").replace(/'/g, \"''\") }}',\n  '{{ ($json.disclaimer || \"This represents informational guidance only and not legal advice.\").replace(/'/g, \"''\") }}',\n  '{{ ($json.lookup_mode || \"historical_animal_backfill_strict_final_only\").replace(/'/g, \"''\") }}',\n  NOW(),\n  NOW()\n)\nON CONFLICT (id) DO UPDATE SET\n  document_number = EXCLUDED.document_number,\n  title = EXCLUDED.title,\n  abstract = EXCLUDED.abstract,\n  document_type = EXCLUDED.document_type,\n  publication_date = EXCLUDED.publication_date,\n  agency = EXCLUDED.agency,\n  agency_slugs = EXCLUDED.agency_slugs,\n  html_url = EXCLUDED.html_url,\n  pdf_url = EXCLUDED.pdf_url,\n  comment_url = EXCLUDED.comment_url,\n  matched_terms = EXCLUDED.matched_terms,\n  matched_agencies = EXCLUDED.matched_agencies,\n  matched_policy_terms = EXCLUDED.matched_policy_terms,\n  strict_score = EXCLUDED.strict_score,\n  embedding_score = EXCLUDED.embedding_score,\n  ai_decision = EXCLUDED.ai_decision,\n  ai_relevance_status = EXCLUDED.ai_relevance_status,\n  type_of_action = EXCLUDED.type_of_action,\n  urgency = EXCLUDED.urgency,\n  advocacy_relevance = EXCLUDED.advocacy_relevance,\n  deadline_sensitivity = EXCLUDED.deadline_sensitivity,\n  ai_summary = EXCLUDED.ai_summary,\n  why_it_matters = EXCLUDED.why_it_matters,\n  actionability = EXCLUDED.actionability,\n  recommended_action = EXCLUDED.recommended_action,\n  talking_points = EXCLUDED.talking_points,\n  deadline = EXCLUDED.deadline,\n  verification_instructions = EXCLUDED.verification_instructions,\n  disclaimer = EXCLUDED.disclaimer,\n  lookup_mode = EXCLUDED.lookup_mode,\n  updated_at = NOW()\nRETURNING id, title, agency, publication_date, ai_decision, embedding_score;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        992,
+        1488
+      ],
+      "id": "e4fca2c7-4fa8-4292-aff2-f150346c52ff",
+      "name": "Postgres - Store Final Relevant Policies Only2",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        992,
+        1712
+      ],
+      "id": "6e51060c-387d-46ac-ad70-06920dd4fa90",
+      "name": "Discard Rejected Records - No Postgres Storage1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1232,
+        1488
+      ],
+      "id": "52441e75-1278-4170-9fe1-a125b6e252bb",
+      "name": "Done - Final Relevant Records Stored1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Backfill Range2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Strict Animal Policy Candidate Filter - No Storage": {
+      "main": [
+        [
+          {
+            "node": "Build Embedding Request - Clean1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Embedding Response With Original": {
+      "main": [
+        [
+          {
+            "node": "Embedding Similarity Gate - No Storage1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Relevance Response With Original": {
+      "main": [
+        [
+          {
+            "node": "Parse OpenRouter Final Relevance Result1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Backfill Range2": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Ensure fr_documents Schema Only1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Ensure fr_documents Schema Only1": {
+      "main": [
+        [
+          {
+            "node": "Restore Backfill Context1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Backfill Context1": {
+      "main": [
+        [
+          {
+            "node": "Fetch First Page2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch First Page2": {
+      "main": [
+        [
+          {
+            "node": "Build Page URLs2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Page URLs2": {
+      "main": [
+        [
+          {
+            "node": "Fetch Each Page2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Each Page2": {
+      "main": [
+        [
+          {
+            "node": "Normalize Federal Register Documents2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Federal Register Documents2": {
+      "main": [
+        [
+          {
+            "node": "Strict Animal Policy Candidate Filter - No Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Embedding Request - Clean1": {
+      "main": [
+        [
+          {
+            "node": "Merge Embedding Response With Original",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate OpenRouter Embeddings2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate OpenRouter Embeddings2": {
+      "main": [
+        [
+          {
+            "node": "Merge Embedding Response With Original",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Embedding Similarity Gate - No Storage1": {
+      "main": [
+        [
+          {
+            "node": "Build OpenRouter Final Relevance Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build OpenRouter Final Relevance Request1": {
+      "main": [
+        [
+          {
+            "node": "Merge Relevance Response With Original",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate OpenRouter Final Relevance Check1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate OpenRouter Final Relevance Check1": {
+      "main": [
+        [
+          {
+            "node": "Merge Relevance Response With Original",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Parse OpenRouter Final Relevance Result1": {
+      "main": [
+        [
+          {
+            "node": "IF Final Relevant - Store Only These1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Final Relevant - Store Only These1": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Store Final Relevant Policies Only2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Discard Rejected Records - No Postgres Storage1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Store Final Relevant Policies Only2": {
+      "main": [
+        [
+          {
+            "node": "Done - Final Relevant Records Stored1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "c08843fc-505a-475c-8dc6-c25598079cd3",
+  "meta": {
+    "instanceId": "335774245e1bdb6fa209272373e0d181222effe1efeb1e04d30f7c60498098d2"
+  },
+  "id": "K4FSHVfHcK9BdvUx",
+  "tags": [
+    {
+      "updatedAt": "2026-05-30T01:27:46.415Z",
+      "createdAt": "2026-05-30T01:27:46.415Z",
+      "id": "1fJx56B5dhHDWOh9",
+      "name": "strict-final-only"
+    },
+    {
+      "updatedAt": "2026-05-30T00:57:33.236Z",
+      "createdAt": "2026-05-30T00:57:33.236Z",
+      "id": "YvE3YmwYW6tG7CEO",
+      "name": "openrouter"
+    },
+    {
+      "updatedAt": "2026-05-30T00:57:33.235Z",
+      "createdAt": "2026-05-30T00:57:33.235Z",
+      "id": "4SWrep5Ayh3MXDkL",
+      "name": "embeddings"
+    },
+    {
+      "updatedAt": "2026-05-30T00:57:33.233Z",
+      "createdAt": "2026-05-30T00:57:33.233Z",
+      "id": "4HsPsSreTUvMb9Pb",
+      "name": "strict-filter"
+    },
+    {
+      "updatedAt": "2026-05-29T15:08:20.800Z",
+      "createdAt": "2026-05-29T15:08:20.800Z",
+      "id": "J5LnpgOEtHkHvhai",
+      "name": "historical-backfill"
+    },
+    {
+      "updatedAt": "2026-05-27T16:16:11.878Z",
+      "createdAt": "2026-05-27T16:16:11.878Z",
+      "id": "rmDN6Zk9QB84WRbl",
+      "name": "FederalPaws"
+    }
+  ]
+}

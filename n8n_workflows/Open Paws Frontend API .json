@@ -1,0 +1,450 @@
+{
+  "name": "Open Paws Frontend API - Subscribe Calendar Agencies FIXED",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "subscribe",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "7cd60480-3b96-4071-9829-a9d50964713f",
+      "name": "Webhook - Subscribe",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1616,
+        64
+      ],
+      "webhookId": "open-paws-subscribe"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst email = String(body.email || '').trim().toLowerCase();\nconst agencies = Array.isArray(body.agencies) ? body.agencies : [];\nconst topics = Array.isArray(body.topics) ? body.topics : [];\n\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n\nif (!emailRegex.test(email)) {\n  throw new Error('Invalid email address');\n}\n\nconst cleanAgencies = agencies\n  .map(a => String(a || '').trim().toLowerCase())\n  .filter(a => /^[a-z0-9-]+$/.test(a))\n  .slice(0, 25);\n\nconst allowedTopics = new Set([\n  'animal welfare',\n  'wildlife',\n  'livestock',\n  'laboratory animals',\n  'marine mammals',\n  'endangered species',\n  'animal disease',\n  'public comments'\n]);\n\nconst cleanTopics = topics\n  .map(t => String(t || '').trim().toLowerCase())\n  .filter(t => allowedTopics.has(t))\n  .slice(0, 25);\n\nreturn [\n  {\n    json: {\n      email,\n      agencies: cleanAgencies,\n      topics: cleanTopics,\n      agenciesJson: JSON.stringify(cleanAgencies),\n      topicsJson: JSON.stringify(cleanTopics)\n    }\n  }\n];"
+      },
+      "id": "1cd8c7b5-563a-4d67-9c5b-3388f98da457",
+      "name": "Validate Subscribe Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH upserted AS (\n  INSERT INTO subscribers (email, is_active, updated_at)\n  VALUES ('{{ $json.email }}', TRUE, NOW())\n  ON CONFLICT (email)\n  DO UPDATE SET\n    is_active = TRUE,\n    updated_at = NOW()\n  RETURNING id, email\n),\ndeleted_preferences AS (\n  DELETE FROM subscriber_preferences\n  WHERE subscriber_id = (SELECT id FROM upserted)\n),\ninserted_preferences AS (\n  INSERT INTO subscriber_preferences (subscriber_id, agency_slug, topic, created_at)\n  SELECT\n    (SELECT id FROM upserted),\n    prefs.agency_slug,\n    prefs.topic,\n    NOW()\n  FROM (\n    SELECT value AS agency_slug, NULL::text AS topic\n    FROM jsonb_array_elements_text('{{ $json.agenciesJson }}'::jsonb)\n\n    UNION ALL\n\n    SELECT NULL::text AS agency_slug, value AS topic\n    FROM jsonb_array_elements_text('{{ $json.topicsJson }}'::jsonb)\n  ) prefs\n  WHERE prefs.agency_slug IS NOT NULL OR prefs.topic IS NOT NULL\n)\nSELECT\n  TRUE AS success,\n  'Subscription saved successfully.' AS message,\n  id AS subscriber_id,\n  email\nFROM upserted;",
+        "options": {}
+      },
+      "id": "2116b0dc-f3c5-4c55-872a-99471dbaeb51",
+      "name": "Postgres - Upsert Subscriber Preferences",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2128,
+        64
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: $json.success, message: $json.message, subscriber_id: $json.subscriber_id, email: $json.email } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "8aace54b-26fc-462c-9d49-183457988eda",
+      "name": "Respond - Subscribe",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2368,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "calendar-notices",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "10a03a8c-57a9-4217-b655-916a2f8e9648",
+      "name": "Webhook - Calendar Notices",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1616,
+        384
+      ],
+      "webhookId": "open-paws-calendar-notices"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst body = input.body || input;\n\nconst date = String(body.date || '').trim();\nconst agencySlug = String(body.agency_slug || '').trim().toLowerCase();\nconst documentType = String(body.document_type || '').trim().toLowerCase();\nconst actionability = String(body.actionability || '').trim().toLowerCase();\nconst deadlineStatus = String(body.deadline_status || '').trim().toLowerCase();\n\nif (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) {\n  throw new Error('Invalid date. Expected YYYY-MM-DD');\n}\n\nif (agencySlug && !/^[a-z0-9-]+$/.test(agencySlug)) {\n  throw new Error('Invalid agency_slug');\n}\n\nconst allowedDocumentTypes = new Set(['notice', 'rule', 'proposed rule', 'presidential document', '']);\nconst allowedActionability = new Set(['public comment open', 'urgent', 'monitoring only', 'action available', '']);\nconst allowedDeadlineStatus = new Set(['open', 'approaching', 'closed', 'none', '']);\n\nif (!allowedDocumentTypes.has(documentType)) {\n  throw new Error('Invalid document_type');\n}\n\nif (!allowedActionability.has(actionability)) {\n  throw new Error('Invalid actionability');\n}\n\nif (!allowedDeadlineStatus.has(deadlineStatus)) {\n  throw new Error('Invalid deadline_status');\n}\n\nreturn [\n  {\n    json: {\n      date,\n      agency_slug: agencySlug,\n      document_type: documentType,\n      actionability,\n      deadline_status: deadlineStatus\n    }\n  }\n];"
+      },
+      "id": "1eb971df-010c-450a-a264-f38ca2e4fb29",
+      "name": "Validate Calendar Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  id,\n  document_number,\n  title,\n  abstract,\n  document_type,\n  publication_date,\n  agency,\n  html_url,\n  pdf_url,\n  comment_url,\n  matched_terms,\n  strict_score,\n  embedding_score,\n  ai_decision,\n  ai_relevance_status,\n  ai_summary AS summary_plain_language,\n  why_it_matters,\n  actionability,\n  recommended_action,\n  talking_points AS suggested_talking_points,\n  deadline,\n  urgency,\n  advocacy_relevance,\n  deadline_sensitivity,\n  verification_instructions,\n  disclaimer,\n  lookup_mode\nFROM public.fr_documents\nWHERE publication_date = '{{ $json.date }}'::date\n  AND ai_decision = 'SEND'\n  AND ai_relevance_status = 'RELEVANT'\nORDER BY publication_date DESC, title;",
+        "options": {}
+      },
+      "id": "2fd73422-7abd-4b06-8464-771b7b1d0327",
+      "name": "Postgres - Get Calendar Notices",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2128,
+        384
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "558615ce-3c77-4550-b0a6-ead285226271",
+      "name": "Respond - Calendar Notices",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2576,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "path": "agencies",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "782ca01e-6902-4fd0-b6dd-a5cf5289d8a9",
+      "name": "Webhook - Agencies",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1616,
+        704
+      ],
+      "webhookId": "open-paws-agencies"
+    },
+    {
+      "parameters": {
+        "url": "https://www.federalregister.gov/api/v1/agencies",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "74b4775c-b84d-40f0-9eb8-c5939afb54b4",
+      "name": "HTTP - Fetch Federal Register Agencies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1856,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\n\nconst agencies = Array.isArray(raw)\n  ? raw\n  : Array.isArray(raw.results)\n    ? raw.results\n    : Array.isArray(raw.agencies)\n      ? raw.agencies\n      : [];\n\nconst prioritySlugs = [\n  'animal-and-plant-health-inspection-service',\n  'food-and-drug-administration',\n  'fish-and-wildlife-service',\n  'national-oceanic-and-atmospheric-administration',\n  'national-institutes-of-health',\n  'environmental-protection-agency',\n  'agriculture-department',\n  'interior-department',\n  'food-safety-and-inspection-service'\n];\n\nconst formatted = agencies\n  .map(a => ({\n    name: a.name || a.display_name || a.title || '',\n    slug: a.slug || '',\n    url: a.url || (a.slug ? `https://www.federalregister.gov/api/v1/agencies/${a.slug}` : '')\n  }))\n  .filter(a => a.name && a.slug);\n\nformatted.sort((a, b) => {\n  const ai = prioritySlugs.indexOf(a.slug);\n  const bi = prioritySlugs.indexOf(b.slug);\n\n  if (ai !== -1 && bi !== -1) return ai - bi;\n  if (ai !== -1) return -1;\n  if (bi !== -1) return 1;\n  return a.name.localeCompare(b.name);\n});\n\nreturn [\n  {\n    json: {\n      success: true,\n      count: formatted.length,\n      agencies: formatted\n    }\n  }\n];"
+      },
+      "id": "95a89c2f-7df7-4f2f-b76f-e0f9c398f451",
+      "name": "Format Agencies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2128,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "314b57bb-d32c-4641-943e-5ad60100861c",
+      "name": "Respond - Agencies",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2368,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "path": "agency-detail",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c11e524a-0126-483f-8856-7a1e127008a5",
+      "name": "Webhook - Agency Detail",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1616,
+        1024
+      ],
+      "webhookId": "open-paws-agency-detail"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst query = input.query || {};\nconst body = input.body || {};\nconst slug = String(query.slug || body.slug || input.slug || '').trim().toLowerCase();\n\nif (!slug || !/^[a-z0-9-]+$/.test(slug)) {\n  throw new Error('Invalid or missing slug. Use /webhook/agency-detail?slug=animal-and-plant-health-inspection-service');\n}\n\nreturn [{ json: { slug } }];"
+      },
+      "id": "2d1ef301-7a7f-44ff-b61f-23de73390b97",
+      "name": "Validate Agency Slug",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://www.federalregister.gov/api/v1/agencies/' + $json.slug }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "28bcc391-d366-4a68-82c7-2928ebd14f89",
+      "name": "HTTP - Fetch Agency Detail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2128,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, agency: $json } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "bdc8dfb9-4689-4585-8a0c-052cec719aba",
+      "name": "Respond - Agency Detail",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2368,
+        1024
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const notices = $input.all().map(item => item.json);\n\nreturn [\n  {\n    json: {\n      success: true,\n      date: $('Validate Calendar Request').first().json.date,\n      count: notices.length,\n      notices\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2336,
+        384
+      ],
+      "id": "0506a3a1-bf2a-4eca-b90f-abb35c23410d",
+      "name": "Format Calendar Response"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - Subscribe": {
+      "main": [
+        [
+          {
+            "node": "Validate Subscribe Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Subscribe Request": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Upsert Subscriber Preferences",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Upsert Subscriber Preferences": {
+      "main": [
+        [
+          {
+            "node": "Respond - Subscribe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Calendar Notices": {
+      "main": [
+        [
+          {
+            "node": "Validate Calendar Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Calendar Request": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Get Calendar Notices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Get Calendar Notices": {
+      "main": [
+        [
+          {
+            "node": "Format Calendar Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Agencies": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Fetch Federal Register Agencies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Fetch Federal Register Agencies": {
+      "main": [
+        [
+          {
+            "node": "Format Agencies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Agencies": {
+      "main": [
+        [
+          {
+            "node": "Respond - Agencies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Agency Detail": {
+      "main": [
+        [
+          {
+            "node": "Validate Agency Slug",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Agency Slug": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Fetch Agency Detail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Fetch Agency Detail": {
+      "main": [
+        [
+          {
+            "node": "Respond - Agency Detail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Calendar Response": {
+      "main": [
+        [
+          {
+            "node": "Respond - Calendar Notices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "70f99305-13a3-4e13-a385-ed3ee268d244",
+  "meta": {
+    "instanceId": "335774245e1bdb6fa209272373e0d181222effe1efeb1e04d30f7c60498098d2"
+  },
+  "id": "94uDdWrUE2u42JPW",
+  "tags": []
+}

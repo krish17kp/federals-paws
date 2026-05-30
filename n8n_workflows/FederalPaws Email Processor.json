@@ -1,0 +1,1110 @@
+{
+  "name": "FederalPaws Email Processor - Fixed OpenRouter MVP",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "federalpaws-email-processorv2",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -3088,
+        2176
+      ],
+      "id": "ab22f1bf-91e8-4de0-a602-52ec58e0a296",
+      "name": "Webhook - Email Processor API1",
+      "webhookId": "c3fc798e-4ff7-4931-ad8e-ae4d7ef31079"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst incoming = input.body || input;\n\nconst cleanDate = (value) => {\n  if (!value) return \"\";\n  return String(value).slice(0, 10);\n};\n\nconst doc = {\n  id: incoming.id || incoming.document_number || incoming.html_url || incoming.title || \"\",\n  document_number: incoming.document_number || \"\",\n  title: incoming.title || \"\",\n  agency: incoming.agency || \"\",\n  abstract: incoming.abstract || \"\",\n  document_type: incoming.document_type || incoming.type || \"\",\n  publication_date: cleanDate(incoming.publication_date || incoming.declared_publication_date),\n  declared_publication_date: cleanDate(incoming.declared_publication_date || incoming.publication_date),\n  source_stream: incoming.source_stream || \"federal_register\",\n  filing_type: incoming.filing_type || \"published\",\n  filing_tag: incoming.filing_tag || \"FEDERAL_REGISTER_PUBLISHED\",\n  status: incoming.status || \"published\",\n  html_url: incoming.html_url || \"\",\n  pdf_url: incoming.pdf_url || \"\",\n  comment_url: incoming.comment_url || \"\",\n  filed_at: incoming.filed_at || \"\",\n  process_after_date: cleanDate(incoming.process_after_date || incoming.publication_date || incoming.declared_publication_date),\n  raw_json: incoming.raw_json || incoming\n};\n\nreturn [\n  {\n    json: doc\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2592,
+        2064
+      ],
+      "id": "e2e2e29f-d453-474f-b71a-02bac014760b",
+      "name": "Normalize Incoming Paper1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH upsert AS (\n  INSERT INTO public.fr_papers (\n    id,\n    document_number,\n    title,\n    agency,\n    abstract,\n    document_type,\n    publication_date,\n    declared_publication_date,\n    source_stream,\n    filing_type,\n    filing_tag,\n    status,\n    html_url,\n    pdf_url,\n    comment_url,\n    filed_at,\n    process_after_date,\n    raw_json,\n    first_seen_at,\n    last_seen_at\n  )\n  VALUES (\n    '{{ ($json.id || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.document_number || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.title || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.agency || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.abstract || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.document_type || \"\").replace(/'/g, \"''\") }}',\n    NULLIF('{{ $json.publication_date || \"\" }}', '')::date,\n    NULLIF('{{ $json.declared_publication_date || \"\" }}', '')::date,\n    '{{ ($json.source_stream || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.filing_type || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.filing_tag || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.status || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.html_url || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.pdf_url || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.comment_url || \"\").replace(/'/g, \"''\") }}',\n    NULLIF('{{ $json.filed_at || \"\" }}', '')::timestamptz,\n    NULLIF('{{ $json.process_after_date || \"\" }}', '')::date,\n    '{{ JSON.stringify($json.raw_json || {}).replace(/'/g, \"''\") }}'::jsonb,\n    NOW(),\n    NOW()\n  )\n  ON CONFLICT (id) DO UPDATE SET\n    document_number = COALESCE(NULLIF(EXCLUDED.document_number, ''), fr_papers.document_number),\n    title = COALESCE(NULLIF(EXCLUDED.title, ''), fr_papers.title),\n    agency = COALESCE(NULLIF(EXCLUDED.agency, ''), fr_papers.agency),\n    abstract = COALESCE(NULLIF(EXCLUDED.abstract, ''), fr_papers.abstract),\n    document_type = COALESCE(NULLIF(EXCLUDED.document_type, ''), fr_papers.document_type),\n    publication_date = COALESCE(EXCLUDED.publication_date, fr_papers.publication_date),\n    declared_publication_date = COALESCE(EXCLUDED.declared_publication_date, fr_papers.declared_publication_date),\n    source_stream = EXCLUDED.source_stream,\n    filing_type = CASE\n      WHEN fr_papers.filing_tag = 'SPECIAL_PUBLIC_INSPECTION' THEN 'special'\n      ELSE EXCLUDED.filing_type\n    END,\n    filing_tag = CASE\n      WHEN fr_papers.filing_tag = 'SPECIAL_PUBLIC_INSPECTION' THEN fr_papers.filing_tag\n      WHEN EXCLUDED.filing_tag = 'SPECIAL_PUBLIC_INSPECTION' THEN EXCLUDED.filing_tag\n      ELSE EXCLUDED.filing_tag\n    END,\n    status = CASE\n      WHEN EXCLUDED.source_stream = 'federal_register' THEN 'published'\n      ELSE EXCLUDED.status\n    END,\n    html_url = COALESCE(NULLIF(EXCLUDED.html_url, ''), fr_papers.html_url),\n    pdf_url = COALESCE(NULLIF(EXCLUDED.pdf_url, ''), fr_papers.pdf_url),\n    comment_url = COALESCE(NULLIF(EXCLUDED.comment_url, ''), fr_papers.comment_url),\n    filed_at = COALESCE(EXCLUDED.filed_at, fr_papers.filed_at),\n    process_after_date = COALESCE(EXCLUDED.process_after_date, fr_papers.process_after_date),\n    raw_json = COALESCE(EXCLUDED.raw_json, fr_papers.raw_json),\n    last_seen_at = NOW(),\n    updated_at = NOW()\n  RETURNING *\n)\nSELECT *,\n  (\n    source_stream = 'federal_register'\n    AND publication_date <= CURRENT_DATE\n    AND COALESCE(email_sent, false) = false\n    AND COALESCE(processor_status, '') NOT IN ('SEND', 'DO_NOT_SEND', 'NOT_RELEVANT')\n  ) AS should_process_now\nFROM upsert;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2352,
+        2064
+      ],
+      "id": "9d4eb824-7e50-44f6-8966-d5af4cacf157",
+      "name": "Upsert Paper Fallback1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const doc = $input.first().json;\n\nconst animalTerms = [\n  \"animal\",\"animals\",\"animal welfare\",\"animal health\",\"animal disease\",\"animal testing\",\n  \"laboratory animal\",\"lab animal\",\"humane\",\"livestock\",\"cattle\",\"calves\",\"swine\",\"pig\",\"pigs\",\n  \"pork\",\"poultry\",\"chicken\",\"chickens\",\"turkey\",\"turkeys\",\"sheep\",\"goat\",\"goats\",\"horse\",\"horses\",\n  \"equine\",\"veterinary\",\"veterinarian\",\"wildlife\",\"endangered species\",\"threatened species\",\n  \"marine mammal\",\"migratory bird\",\"fish and wildlife\",\"habitat\",\"zoo\",\"circus\",\"shelter\",\"rescue\",\n  \"dog\",\"dogs\",\"cat\",\"cats\",\"puppy\",\"kitten\",\"slaughter\",\"meat inspection\",\"animal transport\",\n  \"animal handling\",\"aphis\",\"usda aphis\",\"fish and wildlife service\",\"noaa fisheries\",\n  \"zoonotic\",\"zoonosis\",\"aquaculture\",\"fur\",\"trapping\",\"hunting\",\"fishing regulations\",\n  \"habitat destruction\",\"invasive species\",\"animal cruelty\",\"animal rights\",\"factory farm\",\n  \"confinement\",\"gestation crate\",\"battery cage\",\"feedlot\",\"rodeo\",\"trophy hunting\"\n];\n\nconst animalAgencies = [\n  \"animal and plant health inspection service\",\"aphis\",\"food safety and inspection service\",\"fsis\",\n  \"fish and wildlife service\",\"national marine fisheries service\",\"noaa fisheries\",\n  \"national oceanic and atmospheric administration\",\"agriculture department\",\n  \"u.s. department of agriculture\",\"interior department\",\"food and drug administration\",\"fda\",\"national institutes of health\",\"nih\",\"environmental protection agency\",\"epa\"\n];\n\nconst negativeTerms = [\n  \"federal reserve\",\"depository institution\",\"reserve requirements\",\"banking\",\n  \"securities and exchange\",\"stock exchange\",\"new york stock exchange\",\n  \"federal energy regulatory commission\",\"adult education\",\"student aid\",\n  \"department of education\",\"nuclear reactor\",\"citric acid\",\"citrate salts\", \"tin mill\",\n\"steel\",\n\"countervailing duty\",\n\"antidumping\",\n\"tariff\",\n\"imports from china\",\n\"international trade commission\",\n\"investigation nos\",\n\"harmonized tariff schedule\"\n];\n\nfunction normalize(text) {\n  return String(text || \"\").toLowerCase().replace(/[^\\w\\s-]/g, \" \").replace(/\\s+/g, \" \").trim();\n}\nfunction escapeRegex(text) {\n  return text.replace(/[.*+?^${}()|[\\]\\\\]/g, \"\\\\$&\");\n}\nfunction hasTerm(text, term) {\n  const normalizedText = normalize(text);\n  const normalizedTerm = normalize(term);\n  if (!normalizedTerm) return false;\n  return new RegExp(`(^|\\\\W)${escapeRegex(normalizedTerm)}($|\\\\W)`, \"i\").test(normalizedText);\n}\nfunction countMatches(text, terms) {\n  return terms.filter(term => hasTerm(text, term));\n}\n\nconst titleText = normalize(doc.title);\nconst abstractText = normalize(doc.abstract);\nconst agencyText = normalize(doc.agency);\nconst mainText = [titleText, abstractText].join(\" \");\nconst fullText = [titleText, abstractText, agencyText, normalize(doc.document_type)].join(\" \");\n\nconst matchedAnimalTerms = countMatches(mainText, animalTerms);\nconst matchedAnimalAgencies = countMatches(agencyText, animalAgencies);\nconst matchedNegativeTerms = countMatches(fullText, negativeTerms);\n\nlet relevanceScore = 0;\n\nfor (const term of animalTerms) {\n  if (hasTerm(titleText, term)) relevanceScore += 45;\n  if (hasTerm(abstractText, term)) relevanceScore += 30;\n}\nif (matchedAnimalAgencies.length > 0) relevanceScore += 15;\nif (doc.comment_url) relevanceScore += 10;\nif (hasTerm(doc.document_type, \"proposed rule\")) relevanceScore += 10;\nelse if (hasTerm(doc.document_type, \"rule\")) relevanceScore += 5;\nif (matchedNegativeTerms.length > 0 && matchedAnimalTerms.length === 0) relevanceScore -= 80;\nif (matchedAnimalTerms.length === 0 && matchedAnimalAgencies.length === 0) relevanceScore -= 50;\n\nconst isCandidate = relevanceScore >= 50 && matchedAnimalTerms.length > 0;\n\nreturn [{\n  json: {\n    ...doc,\n    relevance_score: relevanceScore,\n    matched_animal_terms: matchedAnimalTerms,\n    matched_animal_agencies: matchedAnimalAgencies,\n    matched_negative_terms: matchedNegativeTerms,\n    filter_status: isCandidate ? \"candidate_record_found\" : \"no_relevant_records\",\n    should_send_to_ai: isCandidate\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2112,
+        2064
+      ],
+      "id": "2679c39e-51d5-4b6c-b187-11b7043e66a7",
+      "name": "Keyword Animal Filter1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f1ff9ec0-e378-4a11-9d16-ea5c845654f3",
+              "leftValue": "={{ $json.should_send_to_ai }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1872,
+        2064
+      ],
+      "id": "20f25380-300c-459e-ab3d-25c46485006d",
+      "name": "IF Candidate Relevant1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.fr_papers\nSET\n  relevance_score = {{ $json.relevance_score || 0 }},\n  matched_animal_terms = '{{ JSON.stringify($json.matched_animal_terms || []).replace(/'/g, \"''\") }}'::jsonb,\n  matched_animal_agencies = '{{ JSON.stringify($json.matched_animal_agencies || []).replace(/'/g, \"''\") }}'::jsonb,\n  ai_decision = 'NOT_RELEVANT',\n  processor_status = 'NOT_RELEVANT',\n  processed_at = NOW(),\n  updated_at = NOW()\nWHERE id = '{{ ($json.id || \"\").replace(/'/g, \"''\") }}'\nRETURNING id, title, processor_status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1632,
+        2224
+      ],
+      "id": "54e00a50-e3c5-46b0-87f2-c9714acaf457",
+      "name": "Update DB - Not Relevant1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const aiResponse = $input.first().json;\nconst originalItems = $items(\"Build OpenRouter Request Body1\");\nconst original = originalItems && originalItems.length ? originalItems[0].json : {};\n\nfunction asText(value) {\n  if (value === undefined || value === null) return \"\";\n  if (typeof value === \"string\") return value;\n  return JSON.stringify(value);\n}\n\nfunction getField(content, label) {\n  const regex = new RegExp(`^${label}:\\\\s*(.*)$`, \"im\");\n  const match = String(content || \"\").match(regex);\n  return match ? match[1].trim() : \"\";\n}\n\nif (aiResponse.error) {\n  return [{\n    json: {\n      ...original,\n      ai_content: \"\",\n      ai_decision: \"OPENROUTER_ERROR\",\n      processor_status: \"OPENROUTER_ERROR\",\n      error_message: aiResponse.error.message || asText(aiResponse.error),\n      openrouter_raw: aiResponse\n    }\n  }];\n}\n\nlet content = \"\";\ntry {\n  content = aiResponse.choices[0].message.content || \"\";\n} catch (error) {\n  return [{\n    json: {\n      ...original,\n      ai_content: \"\",\n      ai_decision: \"OPENROUTER_ERROR\",\n      processor_status: \"OPENROUTER_ERROR\",\n      error_message: \"OpenRouter response did not contain choices[0].message.content.\",\n      openrouter_raw: aiResponse\n    }\n  }];\n}\n\ncontent = String(content)\n  .replace(/\\*\\*/g, \"\")\n  .replace(/\\*/g, \"\")\n  .replace(/#{1,6}\\s/g, \"\")\n  .trim();\n\nconst relevanceStatus = getField(content, \"Relevance Status\").toUpperCase();\nconst emailDecisionRaw = getField(content, \"Email Decision\").toUpperCase();\n\nlet decision = \"DO_NOT_SEND\";\nif (relevanceStatus === \"RELEVANT\" && emailDecisionRaw === \"SEND\") {\n  decision = \"SEND\";\n}\n\nreturn [{\n  json: {\n    ...original,\n    ai_content: content,\n    ai_decision: decision,\n    ai_relevance_status: relevanceStatus || \"UNKNOWN\",\n    openrouter_raw: aiResponse\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -912,
+        1904
+      ],
+      "id": "aaa35526-f6f3-4a23-8f20-cd4c6a51982f",
+      "name": "Attach AI Result To Paper1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f9a8478d-322f-40c1-a255-9a5d90fef921",
+              "leftValue": "={{ $json.ai_decision }}",
+              "rightValue": "DO_NOT_SEND",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -432,
+        1792
+      ],
+      "id": "d242b506-38e2-45d8-ba6f-9fa4e9d4740c",
+      "name": "IF DO_NOT_SEND / NOT_RELEVANT1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.fr_papers\nSET\n  relevance_score = {{ $json.relevance_score || 0 }},\n  matched_animal_terms = '{{ JSON.stringify($json.matched_animal_terms || []).replace(/'/g, \"''\") }}'::jsonb,\n  matched_animal_agencies = '{{ JSON.stringify($json.matched_animal_agencies || []).replace(/'/g, \"''\") }}'::jsonb,\n  ai_decision = 'DO_NOT_SEND',\n  ai_summary = '{{ ($json.ai_content || \"\").replace(/'/g, \"''\") }}',\n  ai_raw_response = '{{ JSON.stringify($json.openrouter_raw || {}).replace(/'/g, \"''\") }}'::jsonb,\n  processor_status = 'DO_NOT_SEND',\n  processed_at = NOW(),\n  updated_at = NOW()\nWHERE id = '{{ ($json.id || \"\").replace(/'/g, \"''\") }}'\nRETURNING id, title, processor_status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -192,
+        2032
+      ],
+      "id": "edfb4970-ec64-4f20-aaa1-c70405f2dcab",
+      "name": "Update DB - AI Blocked1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const doc = $input.first().json;\n\nconst today = new Date().toISOString().slice(0, 10);\nconst isSpecial = doc.filing_tag === \"SPECIAL_PUBLIC_INSPECTION\";\n\nconst email_subject = isSpecial\n  ? `Federal Paws SPECIAL Filing Alert — ${doc.publication_date || today}`\n  : `Federal Paws Animal Advocacy Alert — ${doc.publication_date || today}`;\n\nconst header = isSpecial\n  ? `SPECIAL PUBLIC INSPECTION FOLLOW-UP\nThis item was first tracked as a special Public Inspection filing and is now being processed through the published Federal Register pipeline.`\n  : `PUBLISHED FEDERAL REGISTER UPDATE\nThis item is from the official published Federal Register pipeline.`;\n\nconst verification = `Verification instructions:\n1. Open the official Federal Register source link.\n2. Confirm the agency, publication date, document number, and any comment deadline.\n3. Confirm whether the action is still open before using this as advocacy guidance.`;\n\nconst email_text = `Federal Paws Animal Advocacy Notice\n${doc.publication_date || today}\n\n${header}\n\nFiling Tag: ${doc.filing_tag || \"FEDERAL_REGISTER_PUBLISHED\"}\nDocument Number: ${doc.document_number || \"Unknown\"}\nAgency: ${doc.agency || \"Unknown\"}\nOfficial Source: ${doc.html_url || \"No URL\"}\nComment Link: ${doc.comment_url || \"None\"}\n\n${doc.ai_content || doc.ai_summary || doc.abstract || \"Summary unavailable. Please review the official Federal Register notice.\"}\n\n${verification}\n\n---\nThis represents informational guidance only and not legal advice.\nFederal Paws | Open Paws`;\n\nconst email_html = `\n<div style=\"font-family: Arial, sans-serif; color: #0b1b3f; max-width: 720px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;\">\n  <div style=\"background: #071a3d; color: #ffffff; padding: 24px;\">\n    <h2 style=\"margin: 0;\">Federal Paws Animal Advocacy Notice</h2>\n    <p style=\"margin: 8px 0 0;\">${doc.publication_date || today}</p>\n  </div>\n\n  <div style=\"padding: 24px;\">\n    <h3 style=\"margin-top: 0;\">${isSpecial ? \"Special Public Inspection Follow-Up\" : \"Published Federal Register Update\"}</h3>\n    <p>${header.replace(/\\n/g, \"<br>\")}</p>\n\n    <table style=\"width: 100%; border-collapse: collapse; margin: 20px 0;\">\n      <tr>\n        <td style=\"font-weight: bold; padding: 8px; border-bottom: 1px solid #eee;\">Filing Tag</td>\n        <td style=\"padding: 8px; border-bottom: 1px solid #eee;\">${doc.filing_tag || \"FEDERAL_REGISTER_PUBLISHED\"}</td>\n      </tr>\n      <tr>\n        <td style=\"font-weight: bold; padding: 8px; border-bottom: 1px solid #eee;\">Document Number</td>\n        <td style=\"padding: 8px; border-bottom: 1px solid #eee;\">${doc.document_number || \"Unknown\"}</td>\n      </tr>\n      <tr>\n        <td style=\"font-weight: bold; padding: 8px; border-bottom: 1px solid #eee;\">Agency</td>\n        <td style=\"padding: 8px; border-bottom: 1px solid #eee;\">${doc.agency || \"Unknown\"}</td>\n      </tr>\n    </table>\n\n    <div style=\"background: #f5f7fb; border-left: 4px solid #071a3d; padding: 16px; margin: 20px 0;\">\n      ${(doc.ai_content || doc.ai_summary || doc.abstract || \"Summary unavailable. Please review the official Federal Register notice.\").replace(/\\n/g, \"<br>\")}\n    </div>\n\n    <p>\n      <a href=\"${doc.html_url || \"#\"}\" style=\"display: inline-block; background: #071a3d; color: #ffffff; padding: 12px 18px; text-decoration: none; border-radius: 4px;\">\n        View Official Federal Register Notice\n      </a>\n    </p>\n\n    <h4>Verification instructions</h4>\n    <ol>\n      <li>Open the official Federal Register source link.</li>\n      <li>Confirm the agency, publication date, document number, and any comment deadline.</li>\n      <li>Confirm whether the action is still open before using this as advocacy guidance.</li>\n    </ol>\n\n    <p style=\"font-size: 12px; color: #666; margin-top: 24px;\">\n      This represents informational guidance only and not legal advice.\n    </p>\n  </div>\n\n  <div style=\"background: #f2f2f2; padding: 14px 24px; font-size: 12px; color: #555;\">\n    Federal Paws | Open Paws\n  </div>\n</div>\n`;\n\nreturn [\n  {\n    json: {\n      ...doc,\n      email_subject,\n      email_text,\n      email_html\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        1792
+      ],
+      "id": "11ca7057-2396-4baa-90b0-6788df2c2aa6",
+      "name": "Build Email Template1",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "fromEmail": "=krishparekh261@gmail.com",
+        "toEmail": "={{ $json.recipient_email_list }}",
+        "subject": "={{ $json.email_subject }}",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "bccEmail": "={{ $json.recipient_email_list }}"
+        }
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        768,
+        1792
+      ],
+      "id": "3629269a-7ce0-4718-a01c-f165dd88073f",
+      "name": "Email via SMTP1",
+      "webhookId": "1b3ea520-d2b4-44fa-9858-ac428ca57cae",
+      "credentials": {
+        "smtp": {
+          "id": "uJptI5BihGnyeakC",
+          "name": "SMTP account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.fr_papers\nSET\n  relevance_score = {{ $json.relevance_score || 0 }},\n  matched_animal_terms = '{{ JSON.stringify($json.matched_animal_terms || []).replace(/'/g, \"''\") }}'::jsonb,\n  matched_animal_agencies = '{{ JSON.stringify($json.matched_animal_agencies || []).replace(/'/g, \"''\") }}'::jsonb,\n  ai_decision = 'SEND',\n  ai_summary = '{{ ($json.ai_content || \"\").replace(/'/g, \"''\") }}',\n  ai_raw_response = '{{ JSON.stringify($json.openrouter_raw || {}).replace(/'/g, \"''\") }}'::jsonb,\n  email_subject = '{{ ($json.subject || \"\").replace(/'/g, \"''\") }}',\n  email_body = '{{ ($json.body || \"\").replace(/'/g, \"''\") }}',\n  email_sent = true,\n  email_sent_at = NOW(),\n  processor_status = 'SEND',\n  processed_at = NOW(),\n  updated_at = NOW()\nWHERE id = '{{ ($json.id || \"\").replace(/'/g, \"''\") }}'\nRETURNING\n  id AS paper_id,\n  title,\n  processor_status,\n  email_sent_at,\n  {{ Number($json.recipient_count || 0) }}::int AS recipient_count,\n  '{{ ($json.recipient_email_list || \"\").replace(/'/g, \"''\") }}' AS recipient_email_list;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1008,
+        1792
+      ],
+      "id": "ea7c056e-ed45-4288-b1b6-afdfb7fd80b5",
+      "name": "Update DB - Email Sent1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "79ae3292-4307-487b-a6e6-4cf6c7e8537b",
+              "leftValue": "={{ $json.headers && $json.headers['x-federalpaws-secret'] }}",
+              "rightValue": "={{ $env.FEDERALPAWS_WEBHOOK_SECRET }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2832,
+        2160
+      ],
+      "id": "b16fbd8a-8f2b-46fd-9d4c-693204ba0505",
+      "name": "IF Valid Webhook Secret1"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    status: 'UNAUTHORIZED',\n    message: 'Invalid or missing FederalPaws webhook secret. Set FEDERALPAWS_WEBHOOK_SECRET and send x-federalpaws-secret with the same value.'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2592,
+        2304
+      ],
+      "id": "542f9c63-2b12-48e4-b1d1-a3808dfe5d79",
+      "name": "Reject Unauthorized Request1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.fr_processing_events (\n  paper_id,\n  event_type,\n  event_message,\n  event_payload,\n  created_at\n)\nVALUES (\n  '{{ ($json.id || $json.paper_id || \"\").replace(/'/g, \"''\") }}',\n  'NOT_RELEVANT',\n  'Keyword filter marked the paper not relevant.',\n  '{{ JSON.stringify($json).replace(/'/g, \"''\") }}'::jsonb,\n  NOW()\n)\nRETURNING id, paper_id, event_type, created_at;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1392,
+        2224
+      ],
+      "id": "0d5e3805-301f-4597-8f60-3bb40efb04d0",
+      "name": "Log Event - Not Relevant1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.fr_processing_events (\n  paper_id,\n  event_type,\n  event_message,\n  event_payload,\n  created_at\n)\nVALUES (\n  '{{ ($json.id || $json.paper_id || \"\").replace(/'/g, \"''\") }}',\n  'AI_BLOCKED',\n  'AI returned DO_NOT_SEND or NOT_RELEVANT.',\n  '{{ JSON.stringify($json).replace(/'/g, \"''\") }}'::jsonb,\n  NOW()\n)\nRETURNING id, paper_id, event_type, created_at;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        48,
+        2064
+      ],
+      "id": "ace36901-4bc9-488e-af58-22dafef62b71",
+      "name": "Log Event - AI Blocked1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH source AS (\n  SELECT\n    NULLIF('{{ ($json.paper_id || $json.id || $(\"Build Email Template1\").item.json.id || \"\").replace(/'/g, \"''\") }}', '') AS paper_id,\n    '{{ JSON.stringify($json).replace(/'/g, \"''\") }}'::jsonb AS payload\n),\nvalid_paper AS (\n  SELECT fp.id AS paper_id\n  FROM public.fr_papers fp\n  JOIN source s ON fp.id = s.paper_id\n)\nINSERT INTO public.fr_processing_events (\n  paper_id,\n  event_type,\n  event_message,\n  event_payload,\n  created_at\n)\nSELECT\n  valid_paper.paper_id,\n  'EMAIL_SENT',\n  'Email was sent and database was updated.',\n  source.payload,\n  NOW()\nFROM valid_paper\nCROSS JOIN source\nRETURNING id, paper_id, event_type, created_at;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1248,
+        1792
+      ],
+      "id": "d1ece543-e09a-44b6-a712-478e7863404f",
+      "name": "Log Event - Email Sent1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "be7a9ed2-49c4-4504-a9fd-e4d3b89b1ce4",
+              "leftValue": "={{ Boolean($env.OPENROUTER_API_KEY && $env.OPENROUTER_API_KEY !== 'REPLACE_ME') }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1632,
+        1904
+      ],
+      "id": "fb0032ca-ea23-45de-bb57-d756a1f1b60c",
+      "name": "IF OpenRouter Key Configured1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const doc = $input.first().json;\nreturn [{\n  json: {\n    ...doc,\n    ai_content: '',\n    ai_decision: 'OPENROUTER_ERROR',\n    processor_status: 'OPENROUTER_ERROR',\n    error_message: 'OPENROUTER_API_KEY is missing or still set to REPLACE_ME. Create a new OpenRouter key, rotate any exposed key, and set it as an n8n environment variable.',\n    openrouter_raw: {}\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        2032
+      ],
+      "id": "38ad5e30-a60f-48a5-8a16-529da87bf1cb",
+      "name": "Mark OpenRouter Config Error1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const doc = $input.first().json;\n\nconst prompt = `Input notice:\n\nFiling Tag: ${doc.filing_tag || \"FEDERAL_REGISTER_PUBLISHED\"}\nTitle: ${doc.title || \"No title\"}\nAgency: ${doc.agency || \"Unknown agency\"}\nPublication Date: ${doc.publication_date || \"Unknown date\"}\nDocument Type: ${doc.document_type || \"Unknown type\"}\nDocument Number: ${doc.document_number || \"Unknown document number\"}\nAbstract: ${doc.abstract || \"No abstract available\"}\nSource URL: ${doc.html_url || \"No URL available\"}\nPDF URL: ${doc.pdf_url || \"No PDF URL available\"}\nComment URL: ${doc.comment_url || \"No comment URL available\"}\nRelevance Score: ${doc.relevance_score || 0}\nMatched Animal Terms: ${JSON.stringify(doc.matched_animal_terms || [])}\nMatched Animal Agencies: ${JSON.stringify(doc.matched_animal_agencies || [])}\n\nClassify and summarize this notice. Return ONLY this exact format, no markdown, no asterisks, no extra text:\n\nRelevance Status: RELEVANT or NOT_RELEVANT\nEmail Decision: SEND or DO_NOT_SEND\nType of Action: [Proposed Rule / Final Rule / Notice / Public Comment / Permit / Hearing / Other]\nUrgency: [High / Medium / Low]\nAdvocacy Relevance: [High / Medium / Low]\nDeadline Sensitivity: [High / Medium / Low / None]\nTitle: [title]\nAgency: [agency name]\nPublication Date: [YYYY-MM-DD]\nDocument Number: [number]\nSummary: [2-3 plain English sentences. No jargon.]\nWhy It Matters: [1-2 sentences on why animal advocates should care. If not relevant, write: Not applicable.]\nActionability Assessment: [Clearly state whether action is still possible. Informational only.]\nRecommended Action: [Public comment / Monitor / No action available / Research further]\nSuggested Advocacy Talking Points: [2-3 short bullet-style talking points in plain text]\nDeadline: [YYYY-MM-DD or None]\nSource: [html_url]\nVerification Instructions: Open the official Federal Register source link, confirm the agency, publication date, document number, comment deadline, and action type before taking any advocacy action.\n\nDisclaimer: This represents informational guidance only and not legal advice.`;\n\nconst openrouter_request_body = {\n  model: \"openai/gpt-4o-mini\",\n  messages: [\n    {\n      role: \"system\",\n      content: \"You classify Federal Register notices for animal advocacy relevance. Be strict. Do not invent relevance. If the notice is not clearly animal-related, return NOT_RELEVANT and DO_NOT_SEND. Return only the requested plain text format.\"\n    },\n    {\n      role: \"user\",\n      content: prompt\n    }\n  ],\n  temperature: 0,\n  max_tokens: 900\n};\n\nreturn [{\n  json: {\n    ...doc,\n    openrouter_request_body\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1392,
+        1872
+      ],
+      "id": "db755f5e-9c00-40d8-a9be-4e55233e1e90",
+      "name": "Build OpenRouter Request Body1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.fr_papers\nSET\n  ai_decision = 'OPENROUTER_ERROR',\n  processor_status = 'OPENROUTER_ERROR',\n  error_message = '{{ ($json.error_message || \"Unknown OpenRouter error\").replace(/'/g, \"''\") }}',\n  ai_raw_response = '{{ JSON.stringify($json.openrouter_raw || {}).replace(/'/g, \"''\") }}'::jsonb,\n  processed_at = NOW(),\n  updated_at = NOW()\nWHERE id = '{{ ($json.id || \"\").replace(/'/g, \"''\") }}'\nRETURNING id, title, processor_status, error_message;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -432,
+        2064
+      ],
+      "id": "70b1986a-02e8-4915-8e7b-228a4fa5a2a4",
+      "name": "Update DB - OpenRouter Error1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.fr_processing_events (\n  paper_id,\n  event_type,\n  event_message,\n  event_payload,\n  created_at\n)\nVALUES (\n  '{{ ($json.id || $json.paper_id || \"\").replace(/'/g, \"''\") }}',\n  'OPENROUTER_ERROR',\n  '{{ ($json.error_message || \"OpenRouter failed before AI summary could be generated.\").replace(/'/g, \"''\") }}',\n  '{{ JSON.stringify($json).replace(/'/g, \"''\") }}'::jsonb,\n  NOW()\n)\nRETURNING id, paper_id, event_type, created_at;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -192,
+        2224
+      ],
+      "id": "fd3dd175-9d61-4166-8920-0de02a490bc1",
+      "name": "Log Event - OpenRouter Error1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 1. Webhook security\nPurpose: accept only authorized processor calls.\n\nRequired env var:\n`FEDERALPAWS_WEBHOOK_SECRET`\n\nThe request must send header:\n`x-federalpaws-secret`\n\nNo `REPLACE_ME` fallback is allowed. This prevents accidental public access.",
+        "height": 240,
+        "width": 360,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -3072,
+        1872
+      ],
+      "id": "54394815-93c4-4e04-b05b-d80960b30cb0",
+      "name": "NOTE 1 - Webhook Security"
+    },
+    {
+      "parameters": {
+        "content": "## 2. Normalize and upsert\nPurpose: convert webhook body into one consistent Federal Register paper shape, then upsert it into `public.fr_papers`.\n\nThis protects downstream nodes from different source formats such as published docs, public inspection docs, or manual issue lookup records.",
+        "height": 240,
+        "width": 400,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2592,
+        1760
+      ],
+      "id": "60f9cd6f-bdae-4697-8f5b-d089291f67b9",
+      "name": "NOTE 2 - Normalize and Upsert"
+    },
+    {
+      "parameters": {
+        "content": "## 3. Keyword relevance gate\nPurpose: cheap first-pass filter before AI.\n\nOnly records with animal terms in the title/abstract and enough score move to OpenRouter. Non-candidates are marked `NOT_RELEVANT` and logged.",
+        "height": 220,
+        "width": 380,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2112,
+        1760
+      ],
+      "id": "fa69bee2-8941-4ff0-963c-740cdbc1f7b2",
+      "name": "NOTE 3 - Keyword Relevance Gate"
+    },
+    {
+      "parameters": {
+        "content": "## 4. OpenRouter summary path\nPurpose: classify and summarize only records that passed keyword filtering.\n\nRequired env var:\n`OPENROUTER_API_KEY`\n\nEmbeddings are intentionally removed from this MVP path because the previous workflow generated embeddings but did not compare them against reference vectors. That added failure points without improving relevance.",
+        "height": 280,
+        "width": 480,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1632,
+        1568
+      ],
+      "id": "1f0251a5-973e-4eed-b602-bad622636128",
+      "name": "NOTE 4 - OpenRouter Summary Only"
+    },
+    {
+      "parameters": {
+        "content": "## 5. OpenRouter error handling\nPurpose: do not hide AI/API failures as `DO_NOT_SEND`.\n\nIf OpenRouter returns an error, malformed response, missing key, invalid key, rate limit, or no `choices[0].message.content`, the workflow stores `OPENROUTER_ERROR` and logs the raw response.",
+        "height": 260,
+        "width": 460,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -912,
+        1568
+      ],
+      "id": "7e111efc-d8b5-4851-a9c8-f07ba119fcbd",
+      "name": "NOTE 5 - OpenRouter Error Handling"
+    },
+    {
+      "parameters": {
+        "content": "## 6. Send or block\nPurpose: make the final delivery decision.\n\n`SEND` goes to email template, SMTP, DB update, and event log.\n\n`DO_NOT_SEND` is stored as AI blocked and logged.\n\nThis keeps an audit trail for every relevant candidate.",
+        "height": 250,
+        "width": 420,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -432,
+        1520
+      ],
+      "id": "d4e4590b-06bb-440a-b7bf-9a5745df046c",
+      "name": "NOTE 6 - Send or Block"
+    },
+    {
+      "parameters": {
+        "content": "## 7. Final audit trail\nPurpose: prove what happened.\n\nFor sent emails, the workflow stores summary, raw AI response, email subject/body, `email_sent=true`, `email_sent_at`, and an `EMAIL_SENT` processing event.",
+        "height": 240,
+        "width": 440,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        48,
+        1520
+      ],
+      "id": "d750a0e2-9a19-44ba-a20a-12c8e0ac3322",
+      "name": "NOTE 7 - Final Audit Trail"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "https://openpaws.org"
+            },
+            {
+              "name": "X-OpenRouter-Title",
+              "value": "Federal Paws"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.openrouter_request_body }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1184,
+        1888
+      ],
+      "id": "b92484d7-ee16-4c68-a60e-7b41383b30a1",
+      "name": "Generate OpenRouter Summary"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  string_agg(email, ',') AS recipient_email_list,\n  COUNT(*)::int AS recipient_count\nFROM public.subscribers\nWHERE is_active = true\n  AND email ~* '^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}$';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        48,
+        1792
+      ],
+      "id": "5ff1dc2b-b828-45f8-abb8-a06937b21b4f",
+      "name": "Fetch Active Recipients From DB1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "active-recipients-condition",
+              "leftValue": "={{ Number($json.recipient_count || 0) > 0 && String($json.recipient_email_list || '').trim().length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        528,
+        1792
+      ],
+      "id": "2dfb54f2-9040-45dd-8915-30d6f002829d",
+      "name": "IF Active Recipients Found1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE public.fr_papers\nSET\n  ai_decision = 'NO_RECIPIENTS',\n  processor_status = 'NO_RECIPIENTS',\n  error_message = '{{ ($json.error_message || \"No active email recipients found.\").replace(/'/g, \"''\") }}',\n  processed_at = NOW(),\n  updated_at = NOW()\nWHERE id = '{{ ($json.id || \"\").replace(/'/g, \"''\") }}'\nRETURNING id AS paper_id, title, processor_status, error_message;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        768,
+        1952
+      ],
+      "id": "9f45aee8-c2b8-4447-b13f-ced6bceb3033",
+      "name": "Update DB - No Recipients1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO public.fr_processing_events (\n  paper_id,\n  event_type,\n  event_message,\n  event_payload,\n  created_at\n)\nVALUES (\n  '{{ ($json.paper_id || $json.id || \"\").replace(/'/g, \"''\") }}',\n  'NO_RECIPIENTS',\n  '{{ ($json.error_message || \"No active email recipients found.\").replace(/'/g, \"''\") }}',\n  '{{ JSON.stringify($json).replace(/'/g, \"''\") }}'::jsonb,\n  NOW()\n)\nRETURNING id, paper_id, event_type, created_at;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1008,
+        1952
+      ],
+      "id": "efc18cdf-1ee4-41f6-b346-11a5b97b4375",
+      "name": "Log Event - No Recipients1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 8. Recipient lookup from PostgreSQL\nPurpose: pull active subscriber email IDs from `public.fr_email_recipients` before sending.\n\nThe workflow aggregates active emails into one comma-separated BCC list. If no active recipients exist, it does not send an email and logs `NO_RECIPIENTS`.\n\nMinimum table columns required:\n`email text`, `is_active boolean`, `unsubscribed_at timestamptz`.",
+        "height": 260,
+        "width": 460,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        528,
+        1520
+      ],
+      "id": "c27b972d-3fe0-4534-a77e-33a99e4f4c14",
+      "name": "NOTE 8 - Recipient Lookup"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c4cbf764-a56a-4276-821c-5f35d6ac38e9",
+              "leftValue": "={{ $json.ai_decision }}",
+              "rightValue": "OPENROUTER_ERROR",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -672,
+        1920
+      ],
+      "id": "1979d526-1d21-41bc-9117-a6e28386e220",
+      "name": "IF OpenRouter Error1"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        304,
+        1872
+      ],
+      "id": "daedac5c-e8ab-4bd0-8a98-a735469b354b",
+      "name": "Merge"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - Email Processor API1": {
+      "main": [
+        [
+          {
+            "node": "IF Valid Webhook Secret1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Incoming Paper1": {
+      "main": [
+        [
+          {
+            "node": "Upsert Paper Fallback1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Paper Fallback1": {
+      "main": [
+        [
+          {
+            "node": "Keyword Animal Filter1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keyword Animal Filter1": {
+      "main": [
+        [
+          {
+            "node": "IF Candidate Relevant1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Candidate Relevant1": {
+      "main": [
+        [
+          {
+            "node": "IF OpenRouter Key Configured1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update DB - Not Relevant1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update DB - Not Relevant1": {
+      "main": [
+        [
+          {
+            "node": "Log Event - Not Relevant1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach AI Result To Paper1": {
+      "main": [
+        [
+          {
+            "node": "IF OpenRouter Error1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF DO_NOT_SEND / NOT_RELEVANT1": {
+      "main": [
+        [
+          {
+            "node": "Update DB - AI Blocked1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Email Template1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update DB - AI Blocked1": {
+      "main": [
+        [
+          {
+            "node": "Log Event - AI Blocked1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email Template1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Recipients From DB1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Email via SMTP1": {
+      "main": [
+        [
+          {
+            "node": "Update DB - Email Sent1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update DB - Email Sent1": {
+      "main": [
+        [
+          {
+            "node": "Log Event - Email Sent1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Valid Webhook Secret1": {
+      "main": [
+        [
+          {
+            "node": "Normalize Incoming Paper1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Unauthorized Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF OpenRouter Key Configured1": {
+      "main": [
+        [
+          {
+            "node": "Build OpenRouter Request Body1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark OpenRouter Config Error1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark OpenRouter Config Error1": {
+      "main": [
+        [
+          {
+            "node": "Update DB - OpenRouter Error1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build OpenRouter Request Body1": {
+      "main": [
+        [
+          {
+            "node": "Generate OpenRouter Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update DB - OpenRouter Error1": {
+      "main": [
+        [
+          {
+            "node": "Log Event - OpenRouter Error1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate OpenRouter Summary": {
+      "main": [
+        [
+          {
+            "node": "Attach AI Result To Paper1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Recipients From DB1": {
+      "main": [
+        [
+          {
+            "node": "IF Active Recipients Found1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Active Recipients Found1": {
+      "main": [
+        [
+          {
+            "node": "Email via SMTP1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update DB - No Recipients1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update DB - No Recipients1": {
+      "main": [
+        [
+          {
+            "node": "Log Event - No Recipients1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF OpenRouter Error1": {
+      "main": [
+        [
+          {
+            "node": "Update DB - OpenRouter Error1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF DO_NOT_SEND / NOT_RELEVANT1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Email via SMTP1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "6f45a8fd-a08e-4ea2-b5ff-dea0d7b47717",
+  "meta": {
+    "instanceId": "335774245e1bdb6fa209272373e0d181222effe1efeb1e04d30f7c60498098d2"
+  },
+  "id": "NnN4b2g31Ry4v37b",
+  "tags": []
+}

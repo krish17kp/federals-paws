@@ -1,0 +1,457 @@
+{
+  "name": "FederalPaws - Orchestrator Tracker FIXED - 2PM FR 3PM PI",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 15 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        736,
+        1840
+      ],
+      "id": "7ec3971d-9b40-4e66-ad4f-92c783af136f",
+      "name": "Schedule - Public Inspection Preview - 3 PM IST"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        512,
+        1648
+      ],
+      "id": "754192c6-ebd7-483c-bac7-7b5fd7dbb298",
+      "name": "Schedule - Federal Register Published Docs - 2 PM IST1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst etDate = new Intl.DateTimeFormat(\"en-CA\", {\n  timeZone: \"America/New_York\",\n  year: \"numeric\",\n  month: \"2-digit\",\n  day: \"2-digit\"\n}).format(now);\n\nconst etParts = new Intl.DateTimeFormat(\"en-US\", {\n  timeZone: \"America/New_York\",\n  weekday: \"short\",\n  hour: \"2-digit\",\n  minute: \"2-digit\",\n  hour12: false\n}).formatToParts(now);\n\nconst getPart = (type) => etParts.find(p => p.type === type)?.value;\nconst weekday = getPart(\"weekday\");\nconst hour = Number(getPart(\"hour\"));\nconst minute = Number(getPart(\"minute\"));\nconst isWeekday = ![\"Sat\", \"Sun\"].includes(weekday);\n\nreturn [{\n  json: {\n    should_run: isWeekday,\n    et_date: etDate,\n    et_weekday: weekday,\n    et_hour: hour,\n    et_minute: minute,\n    fr_publication_date: etDate,\n    public_inspection_endpoint: \"current\",\n    note: \"Runs only on weekdays. Fetches official Federal Register published docs and Public Inspection docs, tracks all papers in Postgres, and passes eligible unprocessed published papers to the Email Processor API.\"\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        736,
+        1648
+      ],
+      "id": "ec89bf7c-0c46-477f-b5f7-9da30fee0a56",
+      "name": "Build Run Context1"
+    },
+    {
+      "parameters": {
+        "url": "https://www.federalregister.gov/api/v1/documents.json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "per_page",
+              "value": "1000"
+            },
+            {
+              "name": "conditions[publication_date][is]",
+              "value": "={{ $json.fr_publication_date }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        960,
+        1648
+      ],
+      "id": "e5b6a66e-1b6d-42e0-af26-b62ba0fb8540",
+      "name": "Fetch Published Federal Register Docs1",
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://www.federalregister.gov/api/v1/public-inspection-documents/current.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        960,
+        1840
+      ],
+      "id": "2a84dd1f-2ee4-4afc-93a2-9513a663b37a",
+      "name": "Fetch Current Public Inspection Docs1",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst docs = Array.isArray(response.results) ? response.results : [];\n\nfunction ymd(value) {\n  if (!value) return \"\";\n  return String(value).slice(0, 10);\n}\n\nfunction agencyNames(doc) {\n  return (doc.agencies || [])\n    .map(a => a.name || a.raw_name || \"\")\n    .filter(Boolean)\n    .join(\"; \");\n}\n\nreturn docs.map(doc => {\n  const documentNumber = doc.document_number || doc.documentNumber || \"\";\n  const publicationDate = ymd(doc.publication_date);\n\n  return {\n    json: {\n      id: documentNumber || doc.html_url || doc.pdf_url || doc.title,\n      document_number: documentNumber,\n      title: doc.title || \"\",\n      agency: agencyNames(doc),\n      abstract: doc.abstract || doc.excerpts || \"\",\n      document_type: doc.type || \"\",\n      publication_date: publicationDate,\n      declared_publication_date: publicationDate,\n      source_stream: \"federal_register\",\n      filing_type: \"published\",\n      filing_tag: \"FEDERAL_REGISTER_PUBLISHED\",\n      status: \"published\",\n      html_url: doc.html_url || \"\",\n      pdf_url: doc.pdf_url || \"\",\n      comment_url: doc.comment_url || \"\",\n      filed_at: \"\",\n      process_after_date: publicationDate,\n      raw_json: doc\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        1648
+      ],
+      "id": "a13c4d75-901b-4890-b601-cb9fc9b46c8b",
+      "name": "Normalize Federal Register Docs1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst docs = Array.isArray(response.public_inspection_documents)\n  ? response.public_inspection_documents\n  : Array.isArray(response.results)\n    ? response.results\n    : [];\n\nfunction ymd(value) {\n  if (!value) return \"\";\n  return String(value).slice(0, 10);\n}\n\nfunction agencyNames(doc) {\n  return (doc.agencies || [])\n    .map(a => a.name || a.raw_name || \"\")\n    .filter(Boolean)\n    .join(\"; \");\n}\n\nfunction inferFilingType(doc) {\n  const rawType = String(doc.filing_type || doc.public_inspection_filing_type || doc.category || doc.status || \"\").toLowerCase();\n  const filedAt = String(doc.filed_at || doc.file_date || doc.filed_on || \"\").toLowerCase();\n\n  if (rawType.includes(\"special\") || doc.special_filing === true) return \"special\";\n\n  // Regular public inspection filings normally happen at 8:45 a.m. ET.\n  // If the API exposes a different filed time, treat it as special.\n  if (filedAt && !filedAt.includes(\"08:45\") && !filedAt.includes(\"8:45\")) return \"special\";\n\n  return \"regular\";\n}\n\nreturn docs.map(doc => {\n  const documentNumber = doc.document_number || doc.documentNumber || \"\";\n  const declaredPublicationDate = ymd(\n    doc.publication_date ||\n    doc.scheduled_publication_date ||\n    doc.scheduled_publication ||\n    doc.publicationDate\n  );\n\n  const filingType = inferFilingType(doc);\n  const tag = filingType === \"special\"\n    ? \"SPECIAL_PUBLIC_INSPECTION\"\n    : \"REGULAR_PUBLIC_INSPECTION\";\n\n  return {\n    json: {\n      id: documentNumber || doc.html_url || doc.pdf_url || doc.title,\n      document_number: documentNumber,\n      title: doc.title || \"\",\n      agency: agencyNames(doc),\n      abstract: doc.abstract || doc.excerpts || \"\",\n      document_type: doc.type || \"\",\n      publication_date: declaredPublicationDate,\n      declared_publication_date: declaredPublicationDate,\n      source_stream: \"public_inspection\",\n      filing_type: filingType,\n      filing_tag: tag,\n      status: \"public_inspection_scheduled\",\n      html_url: doc.html_url || doc.public_inspection_url || \"\",\n      pdf_url: doc.pdf_url || doc.public_inspection_pdf_url || \"\",\n      comment_url: doc.comment_url || \"\",\n      filed_at: doc.filed_at || doc.file_date || doc.filed_on || \"\",\n      process_after_date: declaredPublicationDate,\n      raw_json: doc\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        1840
+      ],
+      "id": "35d18d12-ed75-4c29-bd34-b9b8de8e788d",
+      "name": "Normalize Public Inspection Docs1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\nconst byId = new Map();\n\nfunction score(doc) {\n  // Prefer official publication over public inspection when the same doc appears twice.\n  let s = 0;\n  if (doc.source_stream === \"federal_register\") s += 100;\n  if (doc.filing_tag === \"SPECIAL_PUBLIC_INSPECTION\") s += 10;\n  if (doc.comment_url) s += 5;\n  return s;\n}\n\nfor (const doc of items) {\n  if (!doc.id) continue;\n  const existing = byId.get(doc.id);\n\n  if (!existing || score(doc) > score(existing)) {\n    // Preserve special tag if it was already discovered in Public Inspection.\n    if (existing?.filing_tag === \"SPECIAL_PUBLIC_INSPECTION\" && doc.filing_tag === \"FEDERAL_REGISTER_PUBLISHED\") {\n      doc.filing_tag = \"SPECIAL_PUBLIC_INSPECTION\";\n      doc.filing_type = \"special\";\n    }\n    byId.set(doc.id, doc);\n  }\n}\n\nconst sorted = Array.from(byId.values()).sort((a, b) => {\n  const d = String(a.publication_date || \"\").localeCompare(String(b.publication_date || \"\"));\n  if (d !== 0) return d;\n  if (a.filing_tag === \"SPECIAL_PUBLIC_INSPECTION\" && b.filing_tag !== \"SPECIAL_PUBLIC_INSPECTION\") return -1;\n  if (a.filing_tag !== \"SPECIAL_PUBLIC_INSPECTION\" && b.filing_tag === \"SPECIAL_PUBLIC_INSPECTION\") return 1;\n  return String(a.title || \"\").localeCompare(String(b.title || \"\"));\n});\n\nreturn sorted.map(doc => ({ json: doc }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        1744
+      ],
+      "id": "97bd1e6d-a759-4a8a-ac83-75cdb47bf9f7",
+      "name": "Deduplicate + Sort Papers1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH upsert AS (\n  INSERT INTO public.fr_papers (\n    id,\n    document_number,\n    title,\n    agency,\n    abstract,\n    document_type,\n    publication_date,\n    declared_publication_date,\n    source_stream,\n    filing_type,\n    filing_tag,\n    status,\n    html_url,\n    pdf_url,\n    comment_url,\n    filed_at,\n    process_after_date,\n    raw_json,\n    first_seen_at,\n    last_seen_at\n  )\n  VALUES (\n    '{{ ($json.id || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.document_number || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.title || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.agency || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.abstract || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.document_type || \"\").replace(/'/g, \"''\") }}',\n    NULLIF('{{ $json.publication_date || \"\" }}', '')::date,\n    NULLIF('{{ $json.declared_publication_date || \"\" }}', '')::date,\n    '{{ ($json.source_stream || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.filing_type || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.filing_tag || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.status || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.html_url || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.pdf_url || \"\").replace(/'/g, \"''\") }}',\n    '{{ ($json.comment_url || \"\").replace(/'/g, \"''\") }}',\n    NULLIF('{{ $json.filed_at || \"\" }}', '')::timestamptz,\n    NULLIF('{{ $json.process_after_date || \"\" }}', '')::date,\n    '{{ JSON.stringify($json.raw_json || {}).replace(/'/g, \"''\") }}'::jsonb,\n    NOW(),\n    NOW()\n  )\n  ON CONFLICT (id) DO UPDATE SET\n    document_number = COALESCE(NULLIF(EXCLUDED.document_number, ''), fr_papers.document_number),\n    title = COALESCE(NULLIF(EXCLUDED.title, ''), fr_papers.title),\n    agency = COALESCE(NULLIF(EXCLUDED.agency, ''), fr_papers.agency),\n    abstract = COALESCE(NULLIF(EXCLUDED.abstract, ''), fr_papers.abstract),\n    document_type = COALESCE(NULLIF(EXCLUDED.document_type, ''), fr_papers.document_type),\n    publication_date = COALESCE(EXCLUDED.publication_date, fr_papers.publication_date),\n    declared_publication_date = COALESCE(EXCLUDED.declared_publication_date, fr_papers.declared_publication_date),\n    source_stream = EXCLUDED.source_stream,\n    filing_type = CASE\n      WHEN fr_papers.filing_tag = 'SPECIAL_PUBLIC_INSPECTION' THEN 'special'\n      ELSE EXCLUDED.filing_type\n    END,\n    filing_tag = CASE\n      WHEN fr_papers.filing_tag = 'SPECIAL_PUBLIC_INSPECTION' THEN fr_papers.filing_tag\n      WHEN EXCLUDED.filing_tag = 'SPECIAL_PUBLIC_INSPECTION' THEN EXCLUDED.filing_tag\n      ELSE EXCLUDED.filing_tag\n    END,\n    status = CASE\n      WHEN EXCLUDED.source_stream = 'federal_register' THEN 'published'\n      ELSE EXCLUDED.status\n    END,\n    html_url = COALESCE(NULLIF(EXCLUDED.html_url, ''), fr_papers.html_url),\n    pdf_url = COALESCE(NULLIF(EXCLUDED.pdf_url, ''), fr_papers.pdf_url),\n    comment_url = COALESCE(NULLIF(EXCLUDED.comment_url, ''), fr_papers.comment_url),\n    filed_at = COALESCE(EXCLUDED.filed_at, fr_papers.filed_at),\n    process_after_date = COALESCE(EXCLUDED.process_after_date, fr_papers.process_after_date),\n    raw_json = COALESCE(EXCLUDED.raw_json, fr_papers.raw_json),\n    last_seen_at = NOW(),\n    updated_at = NOW()\n  RETURNING *\n)\nSELECT *,\n  (\n    source_stream = 'federal_register'\n    AND publication_date <= CURRENT_DATE\n    AND COALESCE(email_sent, false) = false\n    AND COALESCE(processor_status, '') NOT IN ('SEND', 'DO_NOT_SEND', 'NOT_RELEVANT')\n  ) AS should_process_now\nFROM upsert;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1856,
+        1744
+      ],
+      "id": "cf060864-3b00-4bcd-bf12-3d77bee16831",
+      "name": "Store / Update Paper Tracking1",
+      "credentials": {
+        "postgres": {
+          "id": "OiKsNm12CrG7uRtV",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d12ca9cb-0368-42f4-84af-f7ab57e2510e",
+              "leftValue": "={{ $json.should_process_now }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2080,
+        1744
+      ],
+      "id": "c0da3def-d633-4354-9349-599040bab70f",
+      "name": "IF Published + Not Emailed1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://code-for-compassion-u54266.vm.elestio.app/webhook/federalpaws-email-processorv2",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-federalpaws-secret",
+              "value": "={{ $env.FEDERALPAWS_WEBHOOK_SECRET }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2304,
+        1648
+      ],
+      "id": "184c2371-ba51-4f6a-95e8-b7ed281a2ad2",
+      "name": "Call Email Processor API1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2304,
+        1840
+      ],
+      "id": "e4c69ab3-b373-4942-bc17-7972cba39dd8",
+      "name": "No Operation - Tracking Only1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\nif (Array.isArray(response.public_inspection_documents) || Array.isArray(response.results)) {\n  return [{ json: response }];\n}\n\nreturn [\n  {\n    json: {\n      public_inspection_documents: [],\n      results: [],\n      fetch_warning: \"Public Inspection API failed or returned non-JSON response. Continuing workflow with empty Public Inspection records.\",\n      original_error: response\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        1840
+      ],
+      "id": "82df5272-e006-4b3b-9f00-679a2cfd60a7",
+      "name": "Public Inspection Fetch Fallback1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\nif (Array.isArray(response.results)) {\n  return [{ json: response }];\n}\n\nreturn [\n  {\n    json: {\n      results: [],\n      fetch_warning: \"Federal Register API failed or returned non-JSON response. Continuing workflow with empty Federal Register records.\",\n      original_error: response\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        1648
+      ],
+      "id": "7bb40cb6-af50-4309-a214-548153b3e9b6",
+      "name": "Federal Register Fetch Fallback1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule - Public Inspection Preview - 3 PM IST": {
+      "main": [
+        [
+          {
+            "node": "Fetch Current Public Inspection Docs1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule - Federal Register Published Docs - 2 PM IST1": {
+      "main": [
+        [
+          {
+            "node": "Build Run Context1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Run Context1": {
+      "main": [
+        [
+          {
+            "node": "Fetch Published Federal Register Docs1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Published Federal Register Docs1": {
+      "main": [
+        [
+          {
+            "node": "Federal Register Fetch Fallback1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Current Public Inspection Docs1": {
+      "main": [
+        [
+          {
+            "node": "Public Inspection Fetch Fallback1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Federal Register Docs1": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate + Sort Papers1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Public Inspection Docs1": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate + Sort Papers1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicate + Sort Papers1": {
+      "main": [
+        [
+          {
+            "node": "Store / Update Paper Tracking1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store / Update Paper Tracking1": {
+      "main": [
+        [
+          {
+            "node": "IF Published + Not Emailed1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Published + Not Emailed1": {
+      "main": [
+        [
+          {
+            "node": "Call Email Processor API1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Operation - Tracking Only1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Public Inspection Fetch Fallback1": {
+      "main": [
+        [
+          {
+            "node": "Normalize Public Inspection Docs1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Federal Register Fetch Fallback1": {
+      "main": [
+        [
+          {
+            "node": "Normalize Federal Register Docs1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "fa35c580-fa89-496f-8964-1222f334a815",
+  "meta": {
+    "instanceId": "335774245e1bdb6fa209272373e0d181222effe1efeb1e04d30f7c60498098d2"
+  },
+  "id": "vgIteZWYGTAQRNeq",
+  "tags": [
+    {
+      "updatedAt": "2026-05-27T16:16:11.878Z",
+      "createdAt": "2026-05-27T16:16:11.878Z",
+      "id": "rmDN6Zk9QB84WRbl",
+      "name": "FederalPaws"
+    },
+    {
+      "updatedAt": "2026-05-27T16:16:11.884Z",
+      "createdAt": "2026-05-27T16:16:11.884Z",
+      "id": "ppJOIevaHHn2Gdi1",
+      "name": "orchestrator"
+    },
+    {
+      "updatedAt": "2026-05-27T16:32:04.219Z",
+      "createdAt": "2026-05-27T16:32:04.219Z",
+      "id": "byHgo4D1eK8S5VtA",
+      "name": "email-processor"
+    }
+  ]
+}
