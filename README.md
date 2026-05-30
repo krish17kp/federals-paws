@@ -2,6 +2,11 @@
 
 Federal Paws is an Open Paws MVP that monitors Federal Register activity, identifies animal-related policy and regulatory notices, summarizes their advocacy relevance, and helps advocates verify official sources, review deadlines, and decide whether action is still possible.
 
+## Screenshots
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/28e5925d-9152-4464-beca-967a52316a9d" />
+
+![Uploading image.png…]()
 
 ## Architecture
 
