@@ -1,6 +1,7 @@
 # Federal Paws
 
-Federal Paws is the Open Paws RDP MVP frontend for Federal Register Animal Advocacy Email Notifications. It lets animal advocates view backend-processed animal-related Federal Register notices, understand why each item matters, verify the official source, and decide whether action is still possible.
+Federal Paws is an Open Paws MVP that monitors Federal Register activity, identifies animal-related policy and regulatory notices, summarizes their advocacy relevance, and helps advocates verify official sources, review deadlines, and decide whether action is still possible.
+
 
 ## Architecture
 
