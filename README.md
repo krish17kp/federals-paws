@@ -10,6 +10,9 @@ Federal Paws is an Open Paws MVP that monitors Federal Register activity, identi
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/28e5925d-9152-4464-beca-967a52316a9d" />
 
 
+<img width="1435" height="1079" alt="image" src="https://github.com/user-attachments/assets/5fd38390-3747-4be7-949e-b353f1e9223a" />
+
+
 
 ## Architecture
 
