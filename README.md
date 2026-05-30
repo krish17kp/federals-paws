@@ -5,19 +5,35 @@ Federal Paws is an Open Paws MVP that monitors Federal Register activity, identi
 
 ## Architecture
 
-Browser UI -> Next.js internal API routes -> n8n frontend API workflow -> PostgreSQL / Federal Register APIs -> response back to the frontend.
+Browser UI -> Next.js internal API routes -> n8n frontend API workflow -> PostgreSQL processed notice tables -> response back to the frontend.
+
+Federal Register APIs are used by the ingestion/orchestrator workflows and, where needed, by the frontend API workflow for agency metadata.
 
 The browser never calls n8n webhook URLs directly. The Next.js App Router route handlers call the n8n frontend API workflow server-side.
 
-Do not wire this frontend to the email processor webhook, orchestrator webhook, PostgreSQL, embeddings, or admin workflows.
+Do not wire browser/client components directly to n8n webhooks, PostgreSQL, the email processor workflow, the orchestrator workflow, embeddings, or admin workflows. The frontend should only call internal Next.js API routes.
 
-## Tech Stack
+## Frontend Tech Stack
 
 - Next.js App Router
 - React
 - TypeScript
 - Tailwind CSS
 - lucide-react
+
+## Backend / Automation Stack
+
+- n8n
+- PostgreSQL
+- Federal Register API
+- OpenRouter for AI relevance classification and summarization
+- SMTP email delivery
+
+## Deployment / Infrastructure
+
+- Vercel or Railway for the frontend
+- Elestio/self-hosted n8n for workflows
+- Railway PostgreSQL for database storage
 
 ## Setup
 
@@ -108,20 +124,21 @@ Successful notices response:
 
 1. Open the dashboard.
 2. Select a publication date.
-3. Apply agency, document type, actionability, or deadline filters.
-4. Review notice metadata, summary, why it matters, actionability, urgency, and deadline fields.
+3. Apply available filters such as agency, document type, actionability, or deadline status where supported by the backend.
+4. Review notice metadata, plain-language summary, why it matters, actionability, urgency, and deadline fields.
 5. Open the official Federal Register source link.
 6. Read the verification instructions.
 7. Confirm the disclaimer is visible: "This represents informational guidance only and not legal advice."
-8. Optionally submit an email subscription if the frontend API workflow route is active.
+8. Optionally submit an email subscription if the frontend API subscription route is active.
 
 ## Known Limitations
 
-- Authentication, unsubscribe management, and account preferences are not implemented in this frontend.
-- Email logs and audit dashboards are intentionally not included.
-- Notice topic filtering is not shown because the current frontend API workflow contract does not accept a topic filter for `/calendar-notices`.
-- Subscription topics are supported by `POST /api/subscribe`.
-- Date history depends on backend data for the selected publication date.
+* Authentication, unsubscribe management, and account preferences are not implemented in this frontend.
+* Email logs and audit dashboards are intentionally not included in the MVP frontend.
+* Notice topic filtering is not shown because the current `/calendar-notices` frontend API contract does not accept a topic filter.
+* Subscription topics are supported through `POST /api/subscribe` if the frontend API workflow route is active.
+* Date history depends on processed records already stored in PostgreSQL for the selected publication date.
+* The dashboard only displays records returned by the backend as relevant or available for review; it does not directly scan the full Federal Register from the browser.
 
 ## Validation
 
